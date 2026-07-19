@@ -38,6 +38,20 @@ test('preserves high-precision wallet decimals as strings', () => {
   assert.equal(normalizeBalancePayload(payload).total, '0.123456789012345678');
 });
 
+test('deduplicates identical responsive wallet copies', () => {
+  const payload = fixture();
+  payload.wallets = [...payload.wallets, ...structuredClone(payload.wallets)];
+
+  assert.deepEqual(normalizeBalancePayload(payload), {
+    active_currency: 'USDT',
+    total: 0.24,
+    wallets: [
+      { currency: 'CNY', amount: 0.98 },
+      { currency: 'USDT', amount: 0.24 },
+    ],
+  });
+});
+
 for (const [name, mutate] of [
   ['missing active wallet', (payload) => { payload.wallets[1].active = false; }],
   ['multiple active wallets', (payload) => { payload.wallets[0].active = true; }],
@@ -62,13 +76,14 @@ test('balance login marker maps to UPSTREAM_AUTH_EXPIRED', () => {
 test('balance expression uses only verified bounded wallet selectors', () => {
   const expression = buildBalanceExpression({ maxWallets: 20 });
   for (const selector of [
-    '.balances .wallets .wallet',
+    '.wallets .wallet',
     '.cy',
     '.balanceAmout',
     '.wallet.active',
   ]) {
     assert.equal(expression.includes(selector), true, selector);
   }
+  assert.equal(expression.includes('.balances .wallets .wallet'), false);
   assert.match(expression, /slice\(0, maxWallets\)/);
   for (const forbidden of ['cookie', 'localstorage', 'sessionstorage', 'indexeddb', 'fetch(']) {
     assert.equal(expression.toLowerCase().includes(forbidden), false, forbidden);

@@ -26,7 +26,9 @@ function buildBalanceExpression({ maxWallets = 20 } = {}) {
     if (one(document, 'input[type="password"], form[action*="login"], .login-form')) {
       return { status: 'login_required', wallets: [] };
     }
-    const walletNodes = all(document, '.balances .wallets .wallet').slice(0, maxWallets);
+    const walletNodes = all(document, '.wallets .wallet')
+      .filter((wallet) => one(wallet, '.cy') && one(wallet, '.balanceAmout'))
+      .slice(0, maxWallets);
     if (walletNodes.length === 0) return { status: 'schema_changed', wallets: [] };
     return {
       status: 'ready',
@@ -47,23 +49,32 @@ function normalizeBalancePayload(payload) {
     throw schemaError('k81128 wallet schema changed');
   }
 
-  const active = payload.wallets.filter((wallet) => wallet?.active === true);
-  if (active.length !== 1) throw schemaError('k81128 wallet schema changed');
-  const wallets = payload.wallets.map((wallet) => {
+  const seen = new Set();
+  const wallets = [];
+  for (const wallet of payload.wallets) {
     if (!wallet || typeof wallet !== 'object' || Array.isArray(wallet)
       || typeof wallet.active !== 'boolean') {
       throw schemaError('k81128 wallet schema changed');
     }
-    return {
+    const normalized = {
       currency: currency(wallet.currency),
       amount: publicDecimal(wallet.amount),
+      active: wallet.active,
     };
-  });
-  const activeIndex = payload.wallets.indexOf(active[0]);
+    const key = JSON.stringify([normalized.currency, normalized.amount, normalized.active]);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    wallets.push(normalized);
+  }
+  const active = wallets.filter((wallet) => wallet.active === true);
+  if (active.length !== 1) throw schemaError('k81128 wallet schema changed');
   return {
-    active_currency: wallets[activeIndex].currency,
-    total: wallets[activeIndex].amount,
-    wallets,
+    active_currency: active[0].currency,
+    total: active[0].amount,
+    wallets: wallets.map(({ currency: walletCurrency, amount }) => ({
+      currency: walletCurrency,
+      amount,
+    })),
   };
 }
 

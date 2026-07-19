@@ -20,6 +20,7 @@ function run(argv) {
 
   const chrome = Application('Google Chrome');
   const windows = chrome.windows();
+  let loginRequiredResult;
   for (let windowIndex = 0; windowIndex < windows.length; windowIndex += 1) {
     const tabs = windows[windowIndex].tabs();
     for (let tabIndex = 0; tabIndex < tabs.length; tabIndex += 1) {
@@ -38,8 +39,19 @@ function run(argv) {
       if (typeof serialized !== 'string') {
         throw new Error('Browser evaluation returned no JSON');
       }
+      let parsed;
+      try {
+        parsed = JSON.parse(serialized);
+      } catch {
+        throw new Error('Browser evaluation returned invalid JSON');
+      }
+      if (parsed && parsed.status === 'login_required') {
+        if (loginRequiredResult === undefined) loginRequiredResult = serialized;
+        continue;
+      }
       return serialized;
     }
   }
+  if (loginRequiredResult !== undefined) return loginRequiredResult;
   throw new Error('No allowed browser page is available');
 }

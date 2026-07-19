@@ -36,6 +36,8 @@ In another Terminal window, start the existing tunnel:
 
 Both processes and Chrome must remain running. Mac sleep, Chrome exit, session expiry, or closing either process makes the public API unavailable.
 
+For account endpoints, use the site account menu to open **记录 > 电游记录**, which leaves the signed-in account tab on `/assetDetails/gameRecord`. An older signed-out tab may remain open: the helper prefers a same-origin tab whose bounded reader does not report `login_required`.
+
 ## Safe verification
 
 Validate the tunnel configuration without showing any secret:

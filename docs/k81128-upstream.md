@@ -57,16 +57,16 @@
 
 2026-07-19 只读检查验证了以下选择器：
 
-- 钱包列表：`.balances .wallets .wallet`
+- 钱包列表：`.wallets .wallet`（只保留同时含币种和金额的节点）
 - 币种：`.cy`
 - 金额：`.balanceAmout`
 - 当前钱包：`.wallet.active`
 
-表达式最多读取 20 个钱包。Node 侧要求恰好一个当前钱包，并返回 `active_currency`、作为 `total` 的当前钱包金额，以及可见钱包列表。
+页面可能为不同响应式布局渲染完全相同的钱包副本。表达式最多读取 20 个钱包；Node 先按币种、金额和当前状态去除相同副本，再要求恰好一个当前钱包，并返回 `active_currency`、作为 `total` 的当前钱包金额，以及可见钱包列表。
 
 ### 游戏记录 reader
 
-已验证的只读路由是 `/assetDetails/gameRecord`。需要游戏记录时，专用 k81128 账户标签页应停留在此路由；reader 自身不导航、不点击。
+已验证的只读路由是 `/assetDetails/gameRecord`。当前页面菜单名称为“电游记录”：先从账户菜单进入“记录”，再选择“电游记录”。需要游戏记录时，k81128 账户标签页应停留在此路由；reader 自身不导航、不点击。
 
 - 表格：`.gameTable`
 - 记录列表：`.gameTable .recordList`
@@ -75,5 +75,7 @@
 - 列顺序：时间、类型、游戏局号、投注额、派彩
 
 表达式最多读取 200 行。只有已验证空状态才返回空列表。表格或列缺失、时间和金额格式异常时返回 `UPSTREAM_SCHEMA_CHANGED`；出现登录表单时返回 `UPSTREAM_AUTH_EXPIRED`。
+
+如果 Chrome 中同时存在已登录和未登录的同源标签页，Apple Events helper 会跳过返回 `login_required` 的标签页，优先采用能正常返回 reader 状态的标签页；所有同源标签页都未登录时才返回认证过期。
 
 所有自动化夹具均为合成数据，仓库不保存真实余额或游戏记录快照。

@@ -1,0 +1,40 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+
+const HELPER_PATH = path.resolve(__dirname, '..', 'scripts', 'chrome-evaluate.jxa');
+
+function helperRun(tabs) {
+  const source = `${fs.readFileSync(HELPER_PATH, 'utf8')}\nrun`;
+  const Application = () => ({
+    windows: () => [{ tabs: () => tabs }],
+  });
+  return vm.runInNewContext(source, { Application });
+}
+
+function fakeTab(result) {
+  return {
+    execute({ javascript }) {
+      if (javascript === 'location.origin') return 'https://k81128.com';
+      return JSON.stringify(result);
+    },
+  };
+}
+
+test('helper prefers a ready same-origin tab over a login page', () => {
+  const run = helperRun([
+    fakeTab({ status: 'login_required', wallets: [] }),
+    fakeTab({ status: 'ready', wallets: [{ currency: 'USDT' }] }),
+  ]);
+
+  const serialized = run(['https://k81128.com', '({ status: "ready" })']);
+
+  assert.deepEqual(JSON.parse(serialized), {
+    status: 'ready',
+    wallets: [{ currency: 'USDT' }],
+  });
+});
