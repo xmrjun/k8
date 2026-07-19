@@ -38,6 +38,17 @@ test('preserves high-precision wallet decimals as strings', () => {
   assert.equal(normalizeBalancePayload(payload).total, '0.123456789012345678');
 });
 
+test('extracts currency codes from visible Chinese wallet labels', () => {
+  const payload = fixture();
+  payload.wallets[0].currency = 'CNY人民币';
+  payload.wallets[1].currency = 'USDT泰达币';
+
+  assert.deepEqual(normalizeBalancePayload(payload).wallets, [
+    { currency: 'CNY', amount: 0.98 },
+    { currency: 'USDT', amount: 0.24 },
+  ]);
+});
+
 test('deduplicates identical responsive wallet copies', () => {
   const payload = fixture();
   payload.wallets = [...payload.wallets, ...structuredClone(payload.wallets)];

@@ -4,6 +4,7 @@ const { CODES, upstreamError } = require('../../upstream/errors');
 
 const DECIMAL_PATTERN = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
 const CURRENCY_PATTERN = /^[A-Z0-9]{2,12}$/;
+const VISIBLE_CURRENCY_PATTERN = /^([A-Z0-9]{2,12})(?:[\u3400-\u9fff]+)?$/i;
 
 function schemaError(message = 'Browser page schema changed') {
   return upstreamError(CODES.SCHEMA_CHANGED, message);
@@ -24,6 +25,12 @@ function currency(value) {
   return normalized;
 }
 
+function visibleCurrency(value) {
+  const match = requiredText(value).match(VISIBLE_CURRENCY_PATTERN);
+  if (!match) throw schemaError();
+  return currency(match[1]);
+}
+
 function significantDigits(decimal) {
   const digits = decimal.replace('.', '').replace(/^0+/, '').replace(/0+$/, '');
   return digits.length || 1;
@@ -37,4 +44,11 @@ function publicDecimal(value) {
   return significantDigits(decimal) <= 15 ? numeric : decimal;
 }
 
-module.exports = { authError, currency, publicDecimal, requiredText, schemaError };
+module.exports = {
+  authError,
+  currency,
+  publicDecimal,
+  requiredText,
+  schemaError,
+  visibleCurrency,
+};

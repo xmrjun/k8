@@ -46,9 +46,16 @@ test('returns an empty list only for the verified empty state', () => {
   assert.deepEqual(normalizeBetsPayload({
     status: 'ready',
     empty: true,
-    currency: 'USDT',
+    currency: 'USDT泰达币',
     rows: [],
   }, { limit: 25 }), []);
+});
+
+test('extracts currency code from the visible Chinese game-record label', () => {
+  const payload = fixture();
+  payload.currency = 'USDT泰达币';
+
+  assert.equal(normalizeBetsPayload(payload, { limit: 1 })[0].currency, 'USDT');
 });
 
 test('applies deterministic cursor offsets and limits', () => {

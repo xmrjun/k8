@@ -2,9 +2,9 @@
 
 const {
   authError,
-  currency,
   publicDecimal,
   schemaError,
+  visibleCurrency,
 } = require('./common');
 
 function buildBalanceExpression({ maxWallets = 20 } = {}) {
@@ -57,7 +57,7 @@ function normalizeBalancePayload(payload) {
       throw schemaError('k81128 wallet schema changed');
     }
     const normalized = {
-      currency: currency(wallet.currency),
+      currency: visibleCurrency(wallet.currency),
       amount: publicDecimal(wallet.amount),
       active: wallet.active,
     };

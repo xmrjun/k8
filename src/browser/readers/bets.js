@@ -2,10 +2,10 @@
 
 const {
   authError,
-  currency,
   publicDecimal,
   requiredText,
   schemaError,
+  visibleCurrency,
 } = require('./common');
 
 const LOCAL_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/;
@@ -107,7 +107,7 @@ function normalizeBetsPayload(payload, options) {
     || !Array.isArray(payload.rows) || payload.rows.length > 200) {
     throw schemaError('k81128 game-record schema changed');
   }
-  const normalizedCurrency = currency(payload.currency);
+  const normalizedCurrency = visibleCurrency(payload.currency);
   if (payload.empty) {
     if (payload.rows.length !== 0) throw schemaError('k81128 game-record schema changed');
     return [];
