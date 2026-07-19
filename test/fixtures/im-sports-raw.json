@@ -1,0 +1,106 @@
+{
+  "status": "ready",
+  "sections": [
+    {
+      "scope": "live",
+      "sport": "football",
+      "competitions": [
+        {
+          "league": "Example Live League",
+          "events": [
+            {
+              "event_id": "900000001",
+              "home": "Example Home",
+              "away": "Example Away",
+              "score": { "home": "0", "away": "1" },
+              "clock": "2H 77:24",
+              "markets": [
+                {
+                  "period": "full_time",
+                  "type": "1x2",
+                  "selections": [
+                    { "name": "home", "display_odds": "6.43", "available": true },
+                    { "name": "draw", "display_odds": "2.10", "available": true },
+                    { "name": "away", "display_odds": null, "available": false }
+                  ]
+                },
+                {
+                  "period": "full_time",
+                  "type": "handicap",
+                  "selections": [
+                    { "name": "home", "line": "-0.5", "display_odds": "0.95", "available": true },
+                    { "name": "away", "line": "+0.5", "display_odds": "0.87", "available": true }
+                  ]
+                },
+                {
+                  "period": "full_time",
+                  "type": "total",
+                  "selections": [
+                    { "name": "over", "line": "2.5", "display_odds": "0.88", "available": true },
+                    { "name": "under", "line": "2.5", "display_odds": null, "available": false }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "scope": "today",
+      "sport": "basketball",
+      "competitions": [
+        {
+          "league": "Example Today League",
+          "events": [
+            {
+              "event_id": "900000002",
+              "home": "Example Red",
+              "away": "Example Blue",
+              "score": null,
+              "clock": null,
+              "markets": [
+                {
+                  "period": "full_time",
+                  "type": "handicap",
+                  "selections": [
+                    { "name": "home", "line": "-3.5", "display_odds": "0.91", "available": true },
+                    { "name": "away", "line": "+3.5", "display_odds": "0.91", "available": true }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "scope": "early",
+      "sport": "tennis",
+      "competitions": [
+        {
+          "league": "Example Early League",
+          "events": [
+            {
+              "event_id": "900000003",
+              "home": "Example One",
+              "away": "Example Two",
+              "score": null,
+              "clock": "Tomorrow 10:00",
+              "markets": [
+                {
+                  "period": "full_time",
+                  "type": "total",
+                  "selections": [
+                    { "name": "over", "line": "22.5", "display_odds": "0.80", "available": true },
+                    { "name": "under", "line": "22.5", "display_odds": "1.00", "available": true }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
