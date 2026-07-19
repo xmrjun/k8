@@ -6,6 +6,11 @@ function digest(value) {
   return createHash('sha256').update(value, 'utf8').digest();
 }
 
+function isTokenEqual(received, expected) {
+  if (typeof received !== 'string' || typeof expected !== 'string') return false;
+  return timingSafeEqual(digest(received), digest(expected));
+}
+
 function isAuthorized(authorizationHeader, expectedToken) {
   if (typeof authorizationHeader !== 'string' || typeof expectedToken !== 'string') {
     return false;
@@ -16,7 +21,7 @@ function isAuthorized(authorizationHeader, expectedToken) {
     return false;
   }
 
-  return timingSafeEqual(digest(match[1]), digest(expectedToken));
+  return isTokenEqual(match[1], expectedToken);
 }
 
-module.exports = { isAuthorized };
+module.exports = { isAuthorized, isTokenEqual };

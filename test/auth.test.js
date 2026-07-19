@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { isAuthorized } = require('../src/auth');
+const { isAuthorized, isTokenEqual } = require('../src/auth');
 
 const expectedToken = 'expected-token-that-is-at-least-32-characters';
 
@@ -40,4 +40,13 @@ for (const [name, header] of [
 test('isAuthorized safely compares bearer tokens with different source lengths', () => {
   assert.doesNotThrow(() => isAuthorized('Bearer x', expectedToken));
   assert.equal(isAuthorized('Bearer x', expectedToken), false);
+});
+
+test('isTokenEqual safely compares raw tokens without exposing length differences', () => {
+  assert.equal(isTokenEqual('same-token', 'same-token'), true);
+  assert.equal(isTokenEqual('wrong-token', 'same-token'), false);
+  assert.equal(isTokenEqual('short', 'a-much-longer-token'), false);
+  assert.equal(isTokenEqual('', ''), true);
+  assert.equal(isTokenEqual(null, 'token'), false);
+  assert.equal(isTokenEqual('token', undefined), false);
 });
