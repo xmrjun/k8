@@ -111,7 +111,12 @@ function createApp({
       return;
     }
 
-    const routes = new Set(['/api/sports', '/api/balance', '/api/bets']);
+    const routes = new Set([
+      '/api/sports',
+      '/api/sports/account',
+      '/api/balance',
+      '/api/bets',
+    ]);
     if (!routes.has(url.pathname)) {
       sendError(response, 404, 'NOT_FOUND', 'Not found', id);
       return;
@@ -123,6 +128,21 @@ function createApp({
     }
 
     try {
+      if (url.pathname === '/api/sports/account') {
+        if (Array.from(url.searchParams.keys()).length > 0) {
+          sendError(response, 400, 'INVALID_REQUEST', 'Invalid request', id);
+          return;
+        }
+        const data = await upstream.getSportsAccount();
+        success(response, {
+          data,
+          source: SPORTS_SOURCE,
+          fetchedAt: now().toISOString(),
+          requestId: id,
+        });
+        return;
+      }
+
       if (url.pathname === '/api/sports') {
         const options = parseSportsQuery(url.searchParams);
         if (!options) {

@@ -67,10 +67,12 @@ test('GET /health succeeds without authentication', async () => {
 
 test('protected API routes reject a missing bearer token', async () => {
   await withServer({ upstream: createFakeUpstream() }, async (baseUrl) => {
-    const response = await request(baseUrl, '/api/sports');
-    assert.equal(response.status, 401);
-    assert.equal(response.body.error.code, 'UNAUTHORIZED');
-    assert.equal(response.headers.get('www-authenticate'), 'Bearer realm="k8-api"');
+    for (const path of ['/api/sports', '/api/sports/account']) {
+      const response = await request(baseUrl, path);
+      assert.equal(response.status, 401);
+      assert.equal(response.body.error.code, 'UNAUTHORIZED');
+      assert.equal(response.headers.get('www-authenticate'), 'Bearer realm="k8-api"');
+    }
   });
 });
 
@@ -122,6 +124,62 @@ test('GET /api/sports forwards each supported scope and an optional sport', asyn
     { scope: 'early', sport: undefined },
     { scope: 'all', sport: undefined },
   ]);
+});
+
+test('GET /api/sports/account returns an uncached stable account envelope', async () => {
+  const upstream = createFakeUpstream({
+    sportsAccount: {
+      currency: 'USD',
+      available_balance: 12.5,
+      unsettled_amount: 1234,
+    },
+  });
+  await withServer({ upstream }, async (baseUrl) => {
+    const first = await request(baseUrl, '/api/sports/account', authorized());
+    const second = await request(baseUrl, '/api/sports/account', authorized());
+
+    assert.equal(first.status, 200);
+    assert.deepEqual(first.body, {
+      data: {
+        currency: 'USD',
+        available_balance: 12.5,
+        unsettled_amount: 1234,
+      },
+      source: 'im-sports-browser',
+      fetched_at: '2026-07-19T12:00:00.000Z',
+      request_id: 'request-test',
+    });
+    assert.equal(second.status, 200);
+  });
+  assert.equal(upstream.calls.sportsAccount.length, 2);
+});
+
+test('GET /api/sports/account rejects query parameters', async () => {
+  const upstream = createFakeUpstream();
+  await withServer({ upstream }, async (baseUrl) => {
+    const response = await request(
+      baseUrl,
+      '/api/sports/account?extra=value',
+      authorized(),
+    );
+    assert.equal(response.status, 400);
+    assert.equal(response.body.error.code, 'INVALID_REQUEST');
+  });
+  assert.equal(upstream.calls.sportsAccount.length, 0);
+});
+
+test('GET /api/sports/account preserves sanitized upstream error mapping', async () => {
+  const secret = 'private-account-page-detail';
+  const upstream = createFakeUpstream();
+  upstream.getSportsAccount = async () => {
+    throw upstreamError(CODES.AUTH_EXPIRED, secret);
+  };
+  await withServer({ upstream }, async (baseUrl) => {
+    const response = await request(baseUrl, '/api/sports/account', authorized());
+    assert.equal(response.status, 502);
+    assert.equal(response.body.error.code, CODES.AUTH_EXPIRED);
+    assert.equal(JSON.stringify(response.body).includes(secret), false);
+  });
 });
 
 for (const query of [
