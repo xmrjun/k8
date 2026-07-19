@@ -46,6 +46,213 @@ function schemaError() {
   return upstreamError(CODES.SCHEMA_CHANGED, 'IM Sports page schema changed');
 }
 
+function authError() {
+  return upstreamError(CODES.AUTH_EXPIRED, 'IM Sports authentication expired');
+}
+
+function buildSportsExpression({ maxEvents = 500 } = {}) {
+  if (!Number.isInteger(maxEvents) || maxEvents < 1 || maxEvents > 500) {
+    throw new TypeError('maxEvents must be an integer between 1 and 500');
+  }
+
+  return `(() => {
+    const maxEvents = ${maxEvents};
+    const all = (root, selector) => root && typeof root.querySelectorAll === 'function'
+      ? Array.from(root.querySelectorAll(selector))
+      : [];
+    const one = (root, selector) => root && typeof root.querySelector === 'function'
+      ? root.querySelector(selector)
+      : null;
+    const text = (node) => typeof node?.textContent === 'string'
+      ? node.textContent.replace(/\\s+/g, ' ').trim()
+      : '';
+    const hasClass = (node, name) => Boolean(node?.classList?.contains(name));
+    const login = one(document, 'input[type="password"], form[action*="login"], .login-form');
+    if (login) return { status: 'login_required', sections: [] };
+
+    const wraps = all(document, '.eventlisting_wrap');
+    if (wraps.length === 0) return { status: 'schema_changed', sections: [] };
+
+    const scopeFrom = (value) => {
+      const lower = value.toLowerCase();
+      if (value.includes('滚球') || lower.includes('live')) return 'live';
+      if (value.includes('今日') || lower.includes('today')) return 'today';
+      if (value.includes('早盘') || lower.includes('early')) return 'early';
+      return null;
+    };
+    const sportLabels = [
+      ['电子足球', 'efootball'], ['e足球', 'efootball'], ['e-football', 'efootball'],
+      ['电子篮球', 'ebasketball'], ['e篮球', 'ebasketball'], ['e-basketball', 'ebasketball'],
+      ['美式足球', 'american_football'], ['沙滩排球', 'beach_volleyball'],
+      ['电子竞技', 'esports'], ['电竞', 'esports'], ['esports', 'esports'],
+      ['乒乓球', 'table_tennis'], ['table tennis', 'table_tennis'],
+      ['冰上曲棍球', 'ice_hockey'], ['冰球', 'ice_hockey'], ['ice hockey', 'ice_hockey'],
+      ['室内足球', 'futsal'], ['水球', 'water_polo'], ['water polo', 'water_polo'],
+      ['羽毛球', 'badminton'], ['排球', 'volleyball'], ['棒球', 'baseball'],
+      ['篮球', 'basketball'], ['网球', 'tennis'], ['足球', 'football'],
+      ['手球', 'handball'], ['斯诺克', 'snooker'], ['壁球', 'squash'],
+      ['板球', 'cricket'], ['橄榄球', 'rugby'], ['高尔夫', 'golf'],
+      ['飞镖', 'darts'], ['拳击', 'boxing'], ['综合格斗', 'mma'],
+      ['自行车', 'cycling'], ['赛车', 'motorsports'],
+      ['american football', 'american_football'], ['badminton', 'badminton'],
+      ['baseball', 'baseball'], ['basketball', 'basketball'], ['volleyball', 'volleyball'],
+      ['football', 'football'], ['soccer', 'football'], ['tennis', 'tennis'],
+      ['handball', 'handball'], ['snooker', 'snooker'], ['cricket', 'cricket'],
+      ['rugby', 'rugby'], ['golf', 'golf'], ['darts', 'darts'], ['boxing', 'boxing']
+    ];
+    const sportFrom = (value, sportCode) => {
+      const lower = value.toLowerCase();
+      const match = sportLabels.find(([label]) => lower.includes(label.toLowerCase()));
+      if (match) return match[1];
+      if (sportCode === '3') return 'football';
+      return null;
+    };
+    const headerTextFor = (wrap) => {
+      const inside = text(one(wrap, '.eventlisting_header'));
+      if (inside) return inside;
+      let cursor = wrap.previousElementSibling;
+      for (let index = 0; cursor && index < 5; index += 1) {
+        const candidate = text(one(cursor, '.eventlisting_header')) || text(cursor);
+        if (candidate) return candidate;
+        cursor = cursor.previousElementSibling;
+      }
+      return '';
+    };
+    const leagueFor = (row, wrap) => {
+      let node = row.parentElement;
+      for (let depth = 0; node && depth < 6; depth += 1) {
+        const own = text(one(node, '.competition_header_team'));
+        if (own) return own;
+        let previous = node.previousElementSibling;
+        for (let index = 0; previous && index < 4; index += 1) {
+          const candidate = text(one(previous, '.competition_header_team'));
+          if (candidate) return candidate;
+          previous = previous.previousElementSibling;
+        }
+        if (node === wrap) break;
+        node = node.parentElement;
+      }
+      return '';
+    };
+    const oddsSelection = (oddsWrap, name, line) => {
+      const rawOdds = text(one(oddsWrap, '.odds'));
+      const locked = hasClass(oddsWrap, 'lock') || Boolean(one(oddsWrap, '.lock'));
+      const available = !locked && rawOdds !== '' && rawOdds !== '--';
+      const selection = {
+        name,
+        display_odds: available ? rawOdds : null,
+        available,
+      };
+      if (line !== undefined) selection.line = line;
+      return selection;
+    };
+    const marketsFor = (row) => {
+      const info = one(row, '.info');
+      const periodRoot = one(info, '.header_info_inner') || info;
+      if (!periodRoot) return [];
+      const markets = [];
+      const double = one(periodRoot, '.event_even.double');
+      const winnerOdds = all(double, '.odds_wrap').slice(0, 3);
+      if (winnerOdds.length === 3) {
+        markets.push({
+          period: 'full_time',
+          type: '1x2',
+          selections: ['home', 'draw', 'away'].map(
+            (name, index) => oddsSelection(winnerOdds[index], name),
+          ),
+        });
+      }
+
+      const cells = all(periodRoot, '.event_even');
+      for (let index = 0; index < cells.length; index += 1) {
+        const cell = cells[index];
+        if (hasClass(cell, 'double') || hasClass(cell, 'left')) continue;
+        const lines = all(cell, '.handi').map(text).filter(Boolean).slice(0, 2);
+        if (lines.length !== 2) continue;
+        const next = cells[index + 1];
+        if (!next || !hasClass(next, 'left')) continue;
+        const odds = all(next, '.odds_wrap').slice(0, 2);
+        if (odds.length !== 2) continue;
+        const isTotal = all(cell, '.ou').length > 0;
+        const names = isTotal ? ['over', 'under'] : ['home', 'away'];
+        markets.push({
+          period: 'full_time',
+          type: isTotal ? 'total' : 'handicap',
+          selections: names.map(
+            (name, selectionIndex) => oddsSelection(
+              odds[selectionIndex],
+              name,
+              lines[selectionIndex],
+            ),
+          ),
+        });
+      }
+      return markets;
+    };
+
+    const sections = [];
+    let eventCount = 0;
+    let invalid = false;
+    for (const wrap of wraps) {
+      if (eventCount >= maxEvents) break;
+      const rows = all(wrap, '.event_row');
+      const teamRows = rows.filter((row) => Boolean(one(row, '.team a[href^="/sev/"]')));
+      if (teamRows.length === 0) continue;
+      const firstHref = one(teamRows[0], '.team a[href^="/sev/"]')?.getAttribute?.('href') || '';
+      const firstMatch = firstHref.match(/^\\/sev\\/(\\d+)\\/(\\d+)\\/(\\d+)\\/?$/);
+      const headerText = headerTextFor(wrap);
+      const scope = scopeFrom(headerText);
+      const sport = sportFrom(headerText, firstMatch?.[2]);
+      if (!scope || !sport) {
+        invalid = true;
+        continue;
+      }
+
+      const competitions = [];
+      const competitionByLeague = new Map();
+      for (const row of teamRows) {
+        if (eventCount >= maxEvents) break;
+        const anchor = one(row, '.team a[href^="/sev/"]');
+        const href = anchor?.getAttribute?.('href') || '';
+        const hrefMatch = href.match(/^\\/sev\\/(\\d+)\\/(\\d+)\\/(\\d+)\\/?$/);
+        const teams = all(row, '.teamname_title').map(text).filter(Boolean).slice(0, 2);
+        const league = leagueFor(row, wrap);
+        if (!hrefMatch || teams.length !== 2 || !league) {
+          invalid = true;
+          continue;
+        }
+        const scoreParts = all(row, '.score')
+          .flatMap((node) => text(node).match(/\\d+/g) || [])
+          .slice(0, 2);
+        const event = {
+          event_id: hrefMatch[3],
+          home: teams[0],
+          away: teams[1],
+          score: scoreParts.length === 2
+            ? { home: scoreParts[0], away: scoreParts[1] }
+            : null,
+          clock: text(one(row, '.datetime')) || null,
+          markets: marketsFor(row),
+        };
+        let competition = competitionByLeague.get(league);
+        if (!competition) {
+          competition = { league, events: [] };
+          competitionByLeague.set(league, competition);
+          competitions.push(competition);
+        }
+        competition.events.push(event);
+        eventCount += 1;
+      }
+      if (competitions.length > 0) sections.push({ scope, sport, competitions });
+    }
+
+    if (invalid || sections.length === 0) {
+      return { status: 'schema_changed', sections: [] };
+    }
+    return { status: 'ready', sections };
+  })()`;
+}
+
 function requiredArray(value) {
   if (!Array.isArray(value)) throw schemaError();
   return value;
@@ -200,6 +407,7 @@ function normalizeOptions(options = {}) {
 
 function normalizeSportsPayload(payload, options) {
   const filters = normalizeOptions(options);
+  if (payload?.status === 'login_required') throw authError();
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)
     || payload.status !== 'ready') {
     throw schemaError();
@@ -243,4 +451,4 @@ function normalizeSportsPayload(payload, options) {
   };
 }
 
-module.exports = { normalizeSportsPayload };
+module.exports = { buildSportsExpression, normalizeSportsPayload };

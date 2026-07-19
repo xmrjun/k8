@@ -2,8 +2,12 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 
-const { normalizeSportsPayload } = require('../src/browser/readers/sports');
+const {
+  buildSportsExpression,
+  normalizeSportsPayload,
+} = require('../src/browser/readers/sports');
 const { CODES } = require('../src/upstream/errors');
 
 function fixture() {
@@ -196,4 +200,105 @@ test('conflicting repeated event identity maps to UPSTREAM_SCHEMA_CHANGED', () =
   payload.sections[0].competitions[0].events.push(duplicate);
 
   schemaFailure(() => normalizeSportsPayload(payload, { scope: 'all' }));
+});
+
+test('builds a bounded DOM expression from only verified sports selectors', () => {
+  const expression = buildSportsExpression({ maxEvents: 500 });
+
+  for (const selector of [
+    '.eventlisting_wrap',
+    '.competition_header_team',
+    '.event_row',
+    'a[href^="/sev/"]',
+    '.teamname_title',
+    '.score',
+    '.datetime',
+    '.event_even.double',
+    '.handi',
+    '.ou',
+    '.odds',
+    '.lock',
+  ]) {
+    assert.equal(expression.includes(selector), true, `missing ${selector}`);
+  }
+  assert.match(expression, /const maxEvents = 500;/);
+});
+
+test('sports DOM expression cannot read browser credentials or issue requests', () => {
+  const expression = buildSportsExpression({ maxEvents: 500 });
+
+  for (const forbidden of [
+    'cookie',
+    'localstorage',
+    'sessionstorage',
+    'indexeddb',
+    'fetch(',
+    'xmlhttprequest',
+    'performance.getentries',
+  ]) {
+    assert.equal(expression.toLowerCase().includes(forbidden), false, forbidden);
+  }
+});
+
+test('sports DOM expression emits explicit login and schema markers', () => {
+  const expression = buildSportsExpression({ maxEvents: 500 });
+  const loginDocument = {
+    querySelector(selector) {
+      return selector.includes('password') ? {} : null;
+    },
+    querySelectorAll() {
+      return [];
+    },
+  };
+  const unknownDocument = {
+    querySelector() {
+      return null;
+    },
+    querySelectorAll() {
+      return [];
+    },
+  };
+
+  const loginResult = JSON.parse(JSON.stringify(
+    vm.runInNewContext(expression, { document: loginDocument }),
+  ));
+  const unknownResult = JSON.parse(JSON.stringify(
+    vm.runInNewContext(expression, { document: unknownDocument }),
+  ));
+
+  assert.deepEqual(loginResult, {
+    status: 'login_required',
+    sections: [],
+  });
+  assert.deepEqual(unknownResult, {
+    status: 'schema_changed',
+    sections: [],
+  });
+});
+
+for (const maxEvents of [0, 501, 1.5, '500']) {
+  test(`rejects unsafe sports expression maxEvents ${JSON.stringify(maxEvents)}`, () => {
+    assert.throws(
+      () => buildSportsExpression({ maxEvents }),
+      /maxEvents must be an integer between 1 and 500/,
+    );
+  });
+}
+
+test('login marker maps to UPSTREAM_AUTH_EXPIRED', () => {
+  assert.throws(
+    () => normalizeSportsPayload({ status: 'login_required', sections: [] }),
+    (error) => error?.code === CODES.AUTH_EXPIRED && !error.cause,
+  );
+});
+
+test('schema marker maps to UPSTREAM_SCHEMA_CHANGED', () => {
+  schemaFailure(() => normalizeSportsPayload({ status: 'schema_changed', sections: [] }));
+});
+
+test('a verified empty sports page is a truthful empty success', () => {
+  assert.deepEqual(
+    normalizeSportsPayload({ status: 'ready', sections: [] }, { scope: 'all' }),
+    { events: [], count: 0, truncated: false },
+  );
 });
