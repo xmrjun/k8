@@ -18,9 +18,12 @@ availability, scores, and clocks. It does not submit or prepare bets.
 
 Read-only CDP discovery against the dedicated Chrome session found no upstream
 WebSocket connection or WebSocket frames. During repeated page reloads, the IM
-Sports page used JSON `POST` Fetch responses. The response carrying event data
-contained the structural fields `es`, nested `e`, and `obi`, and arrived about
-every 5.18 seconds in the observed session.
+Sports page used JSON `POST` Fetch responses. The full live response uses a
+`sel` event array containing event, score, market (`mls`), and selection (`ws`)
+state. Later incremental responses use a `dc` array with event and selection
+identifiers plus typed update values. Observed delta batches arrived roughly
+every four to seven seconds. A separate `es`/`e`/`obi` response belongs to the
+odds-boost promotion view and is explicitly not treated as the primary feed.
 
 The implementation therefore intercepts the site's own Fetch responses and
 converts them into a downstream WebSocket feed. It does not increase the site's
@@ -68,18 +71,27 @@ Eligibility is based on all of the following:
 - resource type `Fetch`;
 - successful JSON response;
 - response size within the configured limit;
-- the expected structural event fields.
+- either the verified `sel` snapshot shape or verified `dc` delta shape.
 
 The full URL and headers are not retained or logged. Malformed or oversized
 responses are discarded without replacing the last valid state.
 
 ### IM response adapter
 
-The adapter validates the upstream status and event arrays, then converts the
-site-specific abbreviated fields into the existing public sports event model.
-It creates stable event and selection identifiers from upstream IDs and market
-dimensions. The adapter is pure and is tested against small, hand-sanitized
+The adapter validates `StatusCode`, the `sel` snapshot array, and `dc` delta
+arrays, then converts the site-specific abbreviated fields into the existing
+public sports event model. It creates stable event and selection identifiers
+from upstream IDs and market dimensions. Verified market mappings include bet
+types for handicap, total, and 1X2; game periods for full time and first half;
+selection IDs for home, away, draw, over, and under; and odds-type-aware decimal
+conversion. The adapter is pure and is tested against small, hand-sanitized
 fixtures that contain no credentials, tokens, account values, or request data.
+
+Observed delta value shapes cover complete or partial market arrays, score
+objects, running clock strings, and period-score arrays. The implementation
+applies only verified shapes. An unknown action or shape never mutates state by
+guessing; it makes the feed stale and requests a bounded page resynchronization
+so that a new `sel` snapshot can restore correctness.
 
 ### Feed state and differ
 
@@ -156,6 +168,8 @@ both transports.
 
 - A failed or invalid upstream response is ignored and does not erase the last
   valid snapshot.
+- An unsupported delta action marks the feed stale and triggers one bounded,
+  backoff-controlled page reload to obtain a new full snapshot.
 - If no valid feed response arrives for 15 seconds, the feed becomes stale and
   clients close with code `1012`.
 - CDP disconnection clears readiness, closes clients with code `1012`, and
@@ -200,4 +214,3 @@ Automated tests cover:
 Live verification checks only status codes, connection state, message types,
 sequence ordering, and aggregate counts. It never prints tokens, full URLs,
 headers, or raw payloads.
-
