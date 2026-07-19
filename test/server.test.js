@@ -27,19 +27,20 @@ test('createDisabledUpstream fails every query with a sanitized known error', as
   }
 });
 
-test('browser mode creates exact-origin gateways that share one queue', () => {
+test('CDP browser transport creates exact-origin gateways that share one queue', () => {
   const gateways = [];
   const queues = [];
   const browserConfig = {
     ...config,
     upstreamMode: 'browser',
+    browserTransport: 'cdp',
     browserCdpUrl: 'http://127.0.0.1:9223',
     browserPageOrigin: 'https://k81128.com',
     browserSportsOrigin: 'https://sports.example.test:2053',
     browserOperationTimeoutMs: 1234,
   };
   const upstream = createConfiguredUpstream(browserConfig, {
-    gatewayFactory(options) {
+    cdpGatewayFactory(options) {
       gateways.push(options);
       return { async evaluate() { return {}; }, async close() {} };
     },
@@ -57,6 +58,46 @@ test('browser mode creates exact-origin gateways that share one queue', () => {
   ]);
   assert.equal(queues.length, 1);
   assert.deepEqual(queues[0].options, { timeoutMs: 1234 });
+});
+
+test('Apple Events browser transport creates dual exact-origin gateways with no CDP URL', () => {
+  const appleGateways = [];
+  const cdpGateways = [];
+  const queues = [];
+  const browserConfig = {
+    ...config,
+    upstreamMode: 'browser',
+    browserTransport: 'apple_events',
+    browserCdpUrl: 'http://127.0.0.1:9223',
+    browserPageOrigin: 'https://k81128.com',
+    browserSportsOrigin: 'https://sports.example.test:2053',
+    browserOperationTimeoutMs: 4321,
+  };
+
+  const upstream = createConfiguredUpstream(browserConfig, {
+    appleEventsGatewayFactory(options) {
+      appleGateways.push(options);
+      return { async evaluate() { return {}; }, async close() {} };
+    },
+    cdpGatewayFactory(options) {
+      cdpGateways.push(options);
+      return { async evaluate() { return {}; }, async close() {} };
+    },
+    queueFactory(options) {
+      const queue = { options, run: (operation) => operation({ signal: new AbortController().signal }) };
+      queues.push(queue);
+      return queue;
+    },
+  });
+
+  assert.equal(typeof upstream.getBalance, 'function');
+  assert.deepEqual(appleGateways, [
+    { pageOrigin: 'https://sports.example.test:2053' },
+    { pageOrigin: 'https://k81128.com' },
+  ]);
+  assert.deepEqual(cdpGateways, []);
+  assert.equal(queues.length, 1);
+  assert.deepEqual(queues[0].options, { timeoutMs: 4321 });
 });
 
 test('server shutdown closes an injected upstream lifecycle', async () => {

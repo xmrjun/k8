@@ -3,6 +3,7 @@
 const http = require('node:http');
 
 const { createApp } = require('./app');
+const { createAppleEventsGateway } = require('./browser/apple-events-gateway');
 const { createBrowserGateway } = require('./browser/gateway');
 const { createOperationQueue } = require('./browser/operation-queue');
 const { loadConfig } = require('./config');
@@ -22,18 +23,30 @@ function createDisabledUpstream() {
 }
 
 function createConfiguredUpstream(config, {
-  gatewayFactory = createBrowserGateway,
+  appleEventsGatewayFactory = createAppleEventsGateway,
+  cdpGatewayFactory = createBrowserGateway,
   queueFactory = createOperationQueue,
 } = {}) {
   if (config.upstreamMode !== 'browser') return createDisabledUpstream();
 
   const queue = queueFactory({ timeoutMs: config.browserOperationTimeoutMs });
+  let gatewayFactory;
+  let sharedOptions;
+  if (config.browserTransport === 'apple_events') {
+    gatewayFactory = appleEventsGatewayFactory;
+    sharedOptions = {};
+  } else if (config.browserTransport === 'cdp') {
+    gatewayFactory = cdpGatewayFactory;
+    sharedOptions = { cdpUrl: config.browserCdpUrl };
+  } else {
+    throw new TypeError('Unsupported browser transport');
+  }
   const sportsGateway = gatewayFactory({
-    cdpUrl: config.browserCdpUrl,
+    ...sharedOptions,
     pageOrigin: config.browserSportsOrigin,
   });
   const accountGateway = gatewayFactory({
-    cdpUrl: config.browserCdpUrl,
+    ...sharedOptions,
     pageOrigin: config.browserPageOrigin,
   });
   return createBrowserUpstream({ sportsGateway, accountGateway, queue });
