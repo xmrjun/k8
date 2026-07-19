@@ -11,8 +11,36 @@ const {
   internalError,
 } = require('./response');
 const { CODES } = require('./upstream/errors');
+const { SPORT_KEYS } = require('./browser/readers/sports');
 
-const SOURCE = 'k81128';
+const ACCOUNT_SOURCE = 'k81128';
+const SPORTS_SOURCE = 'im-sports-browser';
+const SPORTS_SCOPES = new Set(['all', 'live', 'today', 'early']);
+const SPORTS = new Set(SPORT_KEYS);
+const SPORTS_CACHE_TTL_MS = Object.freeze({
+  all: 1000,
+  live: 1000,
+  today: 3000,
+  early: 10000,
+});
+const MAX_SPORTS_CACHE_ENTRIES = 64;
+
+function parseSportsQuery(searchParams) {
+  for (const name of searchParams.keys()) {
+    if (name !== 'scope' && name !== 'sport') return null;
+  }
+  if (searchParams.getAll('scope').length > 1
+    || searchParams.getAll('sport').length > 1) {
+    return null;
+  }
+
+  const scope = searchParams.has('scope') ? searchParams.get('scope') : 'all';
+  if (!SPORTS_SCOPES.has(scope)) return null;
+
+  const sport = searchParams.has('sport') ? searchParams.get('sport') : undefined;
+  if (sport !== undefined && !SPORTS.has(sport)) return null;
+  return { scope, sport };
+}
 
 function parseBetsQuery(searchParams) {
   if (searchParams.getAll('limit').length > 1 || searchParams.getAll('cursor').length > 1) {
@@ -52,11 +80,10 @@ function sendUpstreamError(response, error, requestId) {
 function createApp({
   apiToken,
   upstream,
-  sportsCacheMs = 5000,
   now = () => new Date(),
   requestId = randomUUID,
 }) {
-  let sportsCache;
+  const sportsCache = new Map();
 
   return async function app(request, response) {
     const id = requestId();
@@ -97,18 +124,31 @@ function createApp({
 
     try {
       if (url.pathname === '/api/sports') {
+        const options = parseSportsQuery(url.searchParams);
+        if (!options) {
+          sendError(response, 400, 'INVALID_REQUEST', 'Invalid request', id);
+          return;
+        }
         const currentTime = now();
-        if (!sportsCache || currentTime.getTime() >= sportsCache.expiresAt) {
-          sportsCache = {
-            data: await upstream.getSports(),
+        const cacheKey = `${options.scope}:${options.sport || ''}`;
+        let cached = sportsCache.get(cacheKey);
+        if (!cached || currentTime.getTime() >= cached.expiresAt) {
+          const data = await upstream.getSports(options);
+          cached = {
+            data,
             fetchedAt: currentTime.toISOString(),
-            expiresAt: currentTime.getTime() + sportsCacheMs,
+            expiresAt: currentTime.getTime() + SPORTS_CACHE_TTL_MS[options.scope],
           };
+          if (!sportsCache.has(cacheKey)
+            && sportsCache.size >= MAX_SPORTS_CACHE_ENTRIES) {
+            sportsCache.delete(sportsCache.keys().next().value);
+          }
+          sportsCache.set(cacheKey, cached);
         }
         success(response, {
-          data: sportsCache.data,
-          source: SOURCE,
-          fetchedAt: sportsCache.fetchedAt,
+          data: cached.data,
+          source: SPORTS_SOURCE,
+          fetchedAt: cached.fetchedAt,
           requestId: id,
         });
         return;
@@ -118,7 +158,7 @@ function createApp({
         const data = await upstream.getBalance();
         success(response, {
           data,
-          source: SOURCE,
+          source: ACCOUNT_SOURCE,
           fetchedAt: now().toISOString(),
           requestId: id,
         });
@@ -133,7 +173,7 @@ function createApp({
       const data = await upstream.getBets(options);
       success(response, {
         data,
-        source: SOURCE,
+        source: ACCOUNT_SOURCE,
         fetchedAt: now().toISOString(),
         requestId: id,
       });

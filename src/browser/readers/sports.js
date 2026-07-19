@@ -31,6 +31,7 @@ const SPORTS = new Set([
   'volleyball',
   'water_polo',
 ]);
+const SPORT_KEYS = Object.freeze([...SPORTS]);
 const PERIODS = new Set(['full_time']);
 const MARKET_SELECTIONS = Object.freeze({
   '1x2': new Set(['home', 'draw', 'away']),
@@ -451,4 +452,4 @@ function normalizeSportsPayload(payload, options) {
   };
 }
 
-module.exports = { buildSportsExpression, normalizeSportsPayload };
+module.exports = { SPORT_KEYS, buildSportsExpression, normalizeSportsPayload };

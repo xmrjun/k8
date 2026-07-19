@@ -38,7 +38,7 @@ function call(helper, ...args) {
 test('success sends JSON with a stable envelope and request ID', () => {
   const response = call(success, {
     data: [{ event_id: 'event-1' }],
-    source: 'k81128',
+    source: 'im-sports-browser',
     fetchedAt: '2026-07-19T12:00:00.000Z',
     requestId: 'request-success',
   });
@@ -48,7 +48,7 @@ test('success sends JSON with a stable envelope and request ID', () => {
   assert.equal(response.headers['x-request-id'], 'request-success');
   assert.deepEqual(response.body, {
     data: [{ event_id: 'event-1' }],
-    source: 'k81128',
+    source: 'im-sports-browser',
     fetched_at: '2026-07-19T12:00:00.000Z',
     request_id: 'request-success',
   });

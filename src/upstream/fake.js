@@ -4,8 +4,8 @@ function createFakeUpstream({ sports = [], balance = {}, bets = [] } = {}) {
   const calls = { sports: [], balance: [], bets: [] };
   return {
     calls,
-    async getSports() {
-      calls.sports.push({});
+    async getSports(options = {}) {
+      calls.sports.push(options);
       return sports;
     },
     async getBalance() {
