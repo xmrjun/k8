@@ -4,6 +4,7 @@
 
 - `GET /health`
 - `GET /api/sports`
+- `GET /api/sports/account`
 - `GET /api/balance`
 - `GET /api/bets?limit=25&cursor=...`
 
@@ -14,6 +15,8 @@
 HTTP 路由、鉴权、响应格式、缓存、分页校验、浏览器错误映射和只读页面 reader 均已完成。默认的 `BROWSER_TRANSPORT=apple_events` 直接使用 Mac 上当前运行且已经登录的 Google Chrome；不需要复制网页凭证，也不会读取 Cookie、Local Storage、Session Storage、密码、完整页面 URL、URL token、请求头或请求签名。
 
 IM Sports 页面 reader 和限制见 [docs/im-sports-upstream.md](docs/im-sports-upstream.md)，账户页面限制见 [docs/k81128-upstream.md](docs/k81128-upstream.md)。
+
+`GET /api/sports/account` 每次实时读取 IM Sports 页面左侧账户面板，不缓存，返回 `currency`、`available_balance` 和 `unsettled_amount`。它与读取 k81128 主账户钱包的 `/api/balance` 相互独立。
 
 ## 本地运行
 

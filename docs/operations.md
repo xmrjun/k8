@@ -38,6 +38,8 @@ Both processes and Chrome must remain running. Mac sleep, Chrome exit, session e
 
 For account endpoints, use the site account menu to open **记录 > 电游记录**, which leaves the signed-in account tab on `/assetDetails/gameRecord`. An older signed-out tab may remain open: the helper prefers a same-origin tab whose bounded reader does not report `login_required`.
 
+`GET /api/sports/account` reads the signed-in IM Sports tab's visible account panel on every request and returns `currency`, `available_balance`, and `unsettled_amount`. It is not cached. Keep the IM Sports tab open; never copy its full tokenized URL into commands, configuration, logs, or documentation.
+
 ## Safe verification
 
 Validate the tunnel configuration without showing any secret:
@@ -55,6 +57,8 @@ curl -sS -o /dev/null -w '%{http_code}\n' \
 ```
 
 For an authenticated check, read `API_TOKEN` from `.env.local` and print only the HTTP status and sanitized shape/count fields. Never paste the token into shell history, logs, documentation, or chat.
+
+When checking `/api/sports/account`, print only status, source, currency, and booleans showing whether both amount fields exist. Do not print either amount.
 
 ## Existing tunnel route
 
