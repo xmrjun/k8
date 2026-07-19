@@ -118,6 +118,34 @@ Authorization: Bearer <API_TOKEN>
 curl http://127.0.0.1:8788/health
 ```
 
+### 赛事与赔率端点
+
+统一端点：
+
+```text
+GET /api/sports?scope=<范围>&sport=<体育项目>
+```
+
+`scope` 可用值：
+
+| 值 | 含义 |
+| --- | --- |
+| `live` | 滚球中 |
+| `today` | 今日赛事 |
+| `early` | 早盘赛事 |
+| `all` | 页面内所有已识别范围 |
+
+当前服务器可直接使用的足球、篮球示例：
+
+```text
+GET /api/sports?scope=live&sport=football
+GET /api/sports?scope=today&sport=football
+GET /api/sports?scope=early&sport=football
+GET /api/sports?scope=live&sport=basketball
+GET /api/sports?scope=today&sport=basketball
+GET /api/sports?scope=early&sport=basketball
+```
+
 读取滚球足球：
 
 ```bash
@@ -126,10 +154,63 @@ curl \
   "http://127.0.0.1:8788/api/sports?scope=live&sport=football"
 ```
 
-`/api/sports` 支持：
+读取今日篮球：
 
-- `scope=all|live|today|early`
-- 可选 `sport=football` 等已验证类型
+```bash
+curl \
+  -H "Authorization: Bearer $API_TOKEN" \
+  "http://127.0.0.1:8788/api/sports?scope=today&sport=basketball"
+```
+
+读取篮球早盘：
+
+```bash
+curl \
+  -H "Authorization: Bearer $API_TOKEN" \
+  "http://127.0.0.1:8788/api/sports?scope=early&sport=basketball"
+```
+
+远程服务器通过域名调用时，只替换基础地址，查询参数保持相同：
+
+```bash
+curl \
+  -H "Authorization: Bearer $API_TOKEN" \
+  "https://<你的 API 域名>/api/sports?scope=today&sport=basketball"
+```
+
+示例响应结构：
+
+```json
+{
+  "data": {
+    "events": [
+      {
+        "event_id": "...",
+        "sport": "basketball",
+        "scope": "today",
+        "league": "...",
+        "starts_at": "2026-07-19T12:00:00.000Z",
+        "home": "...",
+        "away": "...",
+        "markets": []
+      }
+    ],
+    "count": 1,
+    "truncated": false
+  },
+  "source": "im-sports-browser",
+  "fetchedAt": "2026-07-19T00:00:00.000Z",
+  "requestId": "..."
+}
+```
+
+说明：
+
+- `sport=football` 表示足球，`sport=basketball` 表示篮球。
+- 省略 `sport` 会返回指定范围内所有已识别体育项目。
+- 省略 `scope` 等同于 `scope=all`。
+- `today`、`early` 和篮球当前通过 HTTP 页面快照读取。
+- WebSocket 实时推送当前仍只发布经过验证的 `live + football`；不要把 HTTP 快照能力误认为对应的实时推送已经完成。
 
 读取 IM 体育账户摘要：
 
