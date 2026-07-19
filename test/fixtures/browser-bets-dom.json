@@ -1,21 +1,39 @@
 {
   "status": "ready",
-  "empty": false,
-  "currency": "USDT",
-  "rows": [
+  "currency_label": "投注金额 (USD)",
+  "tabs": [
     {
-      "placed_at": "2026-07-19 20:15:30",
-      "type": "Example Game",
-      "bet_id": "ROUND-900001",
-      "stake": "10.00",
-      "payout": "0.00"
+      "record_status": "unsettled",
+      "empty": false,
+      "rows": [
+        {
+          "date_and_id": "19/07/2026 10:30:00 注单号: SYNTHETIC-1",
+          "description": "Synthetic competition Synthetic home vs Synthetic away Synthetic market Synthetic selection",
+          "odds": "2.10 » 2.25 欧洲盘",
+          "stake": "10.00 可赢金额: 22.50",
+          "state": "确认"
+        },
+        {
+          "date_and_id": "19/07/2026 11:45:30 注单号: SYNTHETIC-2",
+          "description": "Synthetic competition two Synthetic selection two",
+          "odds": "1.95 香港盘",
+          "stake": "1,234.50 可赢金额: 2,407.28",
+          "state": "确认"
+        }
+      ]
     },
     {
-      "placed_at": "2026-07-19 20:16:30",
-      "type": "Example Game Two",
-      "bet_id": "ROUND-900002",
-      "stake": "2.50",
-      "payout": "4.75"
+      "record_status": "settled",
+      "empty": false,
+      "rows": [
+        {
+          "date_and_id": "18/07/2026 09:15:00 注单号: SYNTHETIC-3",
+          "description": "Synthetic settled competition Synthetic settled selection",
+          "odds": "1.80",
+          "stake": "25.00",
+          "state": "已结算"
+        }
+      ]
     }
   ]
 }

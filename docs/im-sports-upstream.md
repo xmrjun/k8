@@ -31,6 +31,24 @@ The 2026-07-19 read-only inspection also established the IM Sports account panel
 
 The reader identifies rows by the exact visible labels `余额` and `未结算注单`; it does not depend on row position. It inspects at most eight account rows and returns only the currency heading, available balance, and unsettled amount. Real account amounts are never stored in fixtures or documentation.
 
+## Bet-record popup contract
+
+The IM Sports bet history is a separate same-origin page whose pathname is exactly
+`/popup/`. The main sports reader is restricted to pathname `/`, while the bet
+reader is restricted to `/popup/`; query strings are never copied, logged, or
+returned.
+
+The popup exposes the exact record tabs `未结算注单` and `已结算注单`, the visible
+currency label `投注金额 (CODE)`, and record rows containing a placed time and bet
+identifier, description, displayed odds, stake/potential-payout text, and visible
+state. The reader inspects at most 200 rows and normalizes local GMT+8 timestamps in
+Node. Fixtures use synthetic identifiers, descriptions, and amounts only.
+
+For `status=all`, the dedicated Chrome page may switch only between those two exact
+record-filter tabs and restores the originally selected tab after reading. It does
+not click record rows, cash-out controls, bet slips, wager buttons, confirmations,
+or links, and it does not issue page requests or access browser storage.
+
 ## Current Chrome transport
 
 The default `apple_events` transport uses a repository-owned JXA helper. For each Chrome tab, the helper executes only `location.origin` and compares the result with the configured pure HTTPS origin. It must not request the Chrome tab's full URL property: the full venue URL may contain browser-managed query data and must not appear in process output, configuration, logs, tests, or API responses.
