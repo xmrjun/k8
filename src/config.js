@@ -42,6 +42,16 @@ function upstreamMode() {
   return value;
 }
 
+function browserTransport() {
+  const value = process.env.BROWSER_TRANSPORT === undefined
+    ? 'apple_events'
+    : process.env.BROWSER_TRANSPORT;
+  if (!['apple_events', 'cdp'].includes(value)) {
+    throw new Error('BROWSER_TRANSPORT must be apple_events or cdp');
+  }
+  return value;
+}
+
 function browserCdpUrl() {
   const rawValue = process.env.BROWSER_CDP_URL || 'http://127.0.0.1:9223';
   let parsed;
@@ -109,6 +119,7 @@ function loadConfig() {
       (value) => value >= 0,
       'must be a non-negative integer',
     ),
+    browserTransport: browserTransport(),
     browserCdpUrl: browserCdpUrl(),
     browserPageOrigin: httpsOriginSetting(
       'BROWSER_PAGE_ORIGIN',
@@ -138,6 +149,7 @@ function publicConfig() {
       ? new URL(config.upstreamBaseUrl).origin
       : '',
     sportsCacheMs: config.sportsCacheMs,
+    browserTransport: config.browserTransport,
     browserPageOrigin: config.browserPageOrigin,
     browserSportsOrigin: config.browserSportsOrigin,
     browserOperationTimeoutMs: config.browserOperationTimeoutMs,

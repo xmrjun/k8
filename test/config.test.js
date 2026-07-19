@@ -44,6 +44,7 @@ test('loadConfig defaults to the loopback Chrome browser bridge', () => {
       upstreamBaseUrl: '',
       upstreamCredential: '',
       sportsCacheMs: 5000,
+      browserTransport: 'apple_events',
       browserCdpUrl: 'http://127.0.0.1:9223',
       browserPageOrigin: 'https://k81128.com',
       browserSportsOrigin: 'https://imsb-fxnag.utoyen.com:2053',
@@ -61,6 +62,7 @@ test('loadConfig reads all configuration from process.env', () => {
     UPSTREAM_CREDENTIAL: 'upstream-secret',
     UPSTREAM_MODE: 'http',
     SPORTS_CACHE_MS: '2500',
+    BROWSER_TRANSPORT: 'cdp',
     BROWSER_CDP_URL: 'http://[::1]:9333',
     BROWSER_PAGE_ORIGIN: 'https://K81128.com',
     BROWSER_SPORTS_ORIGIN: 'https://IMSB-FXNAG.UTOYEN.COM:2053',
@@ -74,6 +76,7 @@ test('loadConfig reads all configuration from process.env', () => {
       upstreamBaseUrl: 'https://api.example.test/v1',
       upstreamCredential: 'upstream-secret',
       sportsCacheMs: 2500,
+      browserTransport: 'cdp',
       browserCdpUrl: 'http://[::1]:9333',
       browserPageOrigin: 'https://k81128.com',
       browserSportsOrigin: 'https://imsb-fxnag.utoyen.com:2053',
@@ -100,6 +103,7 @@ test('publicConfig exposes only non-secret diagnostics', () => {
       upstreamMode: 'browser',
       upstreamOrigin: 'https://api.example.test',
       sportsCacheMs: 5000,
+      browserTransport: 'apple_events',
       browserPageOrigin: 'https://k81128.com',
       browserSportsOrigin: 'https://imsb-fxnag.utoyen.com:2053',
       browserOperationTimeoutMs: 15000,
@@ -110,6 +114,20 @@ test('publicConfig exposes only non-secret diagnostics', () => {
     assert.equal(Object.hasOwn(diagnostics, 'upstreamCredential'), false);
   });
 });
+
+for (const browserTransport of ['unknown', '', 'APPLE_EVENTS']) {
+  test(`loadConfig rejects invalid BROWSER_TRANSPORT ${JSON.stringify(browserTransport)}`, () => {
+    withEnv({
+      API_TOKEN: 'a'.repeat(32),
+      BROWSER_TRANSPORT: browserTransport,
+    }, () => {
+      assert.throws(
+        () => loadConfig(),
+        /BROWSER_TRANSPORT must be apple_events or cdp/,
+      );
+    });
+  });
+}
 
 for (const upstreamMode of ['unknown', '', 'BROWSER']) {
   test(`loadConfig rejects invalid UPSTREAM_MODE ${JSON.stringify(upstreamMode)}`, () => {
