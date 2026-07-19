@@ -12,6 +12,8 @@ const SPORT_LABELS = Object.freeze({
   basketball: '篮球',
   tennis: '网球',
 });
+const SELECTABLE_SCOPE_KEYS = Object.freeze(Object.keys(SCOPE_LABELS));
+const SELECTABLE_SPORT_KEYS = Object.freeze(Object.keys(SPORT_LABELS));
 
 function schemaError() {
   return upstreamError(CODES.SCHEMA_CHANGED, 'IM Sports selection schema changed');
@@ -92,11 +94,15 @@ function buildSportsSelectionExpression({
       }
     }
 
-    const items = all(section, '.leftmenu_sports_item');
-    if (items.length === 0) return { status: 'empty' };
-    const matches = items.filter((item) => all(item, 'div,span').some(
-      (candidate) => candidate.childElementCount === 0 && text(candidate) === sportLabel,
-    ));
+    const findMatches = () => all(section, '.leftmenu_sports_item').filter(
+      (item) => all(item, 'div,span').some(
+        (candidate) => candidate.childElementCount === 0 && text(candidate) === sportLabel,
+      ),
+    );
+    if (scope !== 'live' && !await waitFor(() => findMatches().length > 0)) {
+      return { status: 'empty' };
+    }
+    const matches = findMatches();
     if (matches.length === 0) return { status: 'empty' };
     if (matches.length !== 1) return { status: 'schema_changed' };
     const item = matches[0];
@@ -131,6 +137,8 @@ function normalizeSportsSelectionPayload(payload) {
 }
 
 module.exports = {
+  SELECTABLE_SCOPE_KEYS,
+  SELECTABLE_SPORT_KEYS,
   buildSportsSelectionExpression,
   normalizeSportsSelectionPayload,
 };

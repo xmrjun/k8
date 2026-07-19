@@ -5,7 +5,6 @@ const http = require('node:http');
 const { createApp } = require('../src/app');
 const { createFakeUpstream } = require('../src/upstream/fake');
 const { upstreamError, CODES } = require('../src/upstream/errors');
-const { SPORT_KEYS } = require('../src/browser/readers/sports');
 
 const API_TOKEN = 'test-api-token-that-is-at-least-32-characters';
 
@@ -85,8 +84,9 @@ test('GET /api/sports returns a stable envelope and caches the upstream result',
     },
   });
   await withServer({ upstream }, async (baseUrl) => {
-    const first = await request(baseUrl, '/api/sports', authorized());
-    const second = await request(baseUrl, '/api/sports', authorized());
+    const path = '/api/sports?scope=live&sport=football';
+    const first = await request(baseUrl, path, authorized());
+    const second = await request(baseUrl, path, authorized());
     assert.equal(first.status, 200);
     assert.deepEqual(first.body, {
       data: {
@@ -99,31 +99,26 @@ test('GET /api/sports returns a stable envelope and caches the upstream result',
       request_id: 'request-test',
     });
     assert.deepEqual(second.body.data, first.body.data);
-    assert.deepEqual(upstream.calls.sports, [{ scope: 'all', sport: undefined }]);
+    assert.deepEqual(upstream.calls.sports, [{ scope: 'live', sport: 'football' }]);
   });
 });
 
-test('GET /api/sports forwards each supported scope and an optional sport', async () => {
+test('GET /api/sports forwards every supported scope and sport combination', async () => {
   const upstream = createFakeUpstream({
     sports: { events: [], count: 0, truncated: false },
   });
+  const expected = [];
   await withServer({ upstream }, async (baseUrl) => {
-    for (const path of [
-      '/api/sports?scope=live&sport=football',
-      '/api/sports?scope=today',
-      '/api/sports?scope=early',
-      '/api/sports?scope=all',
-    ]) {
-      assert.equal((await request(baseUrl, path, authorized())).status, 200);
+    for (const scope of ['live', 'today', 'early']) {
+      for (const sport of ['football', 'basketball', 'tennis']) {
+        const path = `/api/sports?scope=${scope}&sport=${sport}`;
+        assert.equal((await request(baseUrl, path, authorized())).status, 200);
+        expected.push({ scope, sport });
+      }
     }
   });
 
-  assert.deepEqual(upstream.calls.sports, [
-    { scope: 'live', sport: 'football' },
-    { scope: 'today', sport: undefined },
-    { scope: 'early', sport: undefined },
-    { scope: 'all', sport: undefined },
-  ]);
+  assert.deepEqual(upstream.calls.sports, expected);
 });
 
 test('GET /api/sports/account returns an uncached stable account envelope', async () => {
@@ -183,10 +178,14 @@ test('GET /api/sports/account preserves sanitized upstream error mapping', async
 });
 
 for (const query of [
+  '',
   'scope=',
   'scope=unknown',
+  'scope=all&sport=football',
+  'scope=live',
   'scope=live&scope=today',
   'sport=',
+  'sport=football',
   'sport=unknown-sport',
   'sport=football&sport=tennis',
   'scope=live&extra=value',
@@ -224,31 +223,29 @@ test('sports cache is keyed independently by scope and sport', async () => {
   ]);
 });
 
-test('sports cache evicts old query keys instead of growing without a bound', async () => {
+test('sports cache keeps all nine supported query keys separate', async () => {
   const upstream = createFakeUpstream({
     sports: { events: [], count: 0, truncated: false },
   });
   const queries = [];
-  for (const scope of ['live', 'today', 'early', 'all']) {
-    for (const sport of SPORT_KEYS) {
+  for (const scope of ['live', 'today', 'early']) {
+    for (const sport of ['football', 'basketball', 'tennis']) {
       queries.push(`/api/sports?scope=${scope}&sport=${sport}`);
     }
   }
-  const first65 = queries.slice(0, 65);
 
   await withServer({ upstream }, async (baseUrl) => {
-    for (const query of first65) {
+    for (const query of queries) {
       assert.equal((await request(baseUrl, query, authorized())).status, 200);
     }
-    assert.equal((await request(baseUrl, first65[0], authorized())).status, 200);
+    assert.equal((await request(baseUrl, queries[0], authorized())).status, 200);
   });
 
-  assert.equal(upstream.calls.sports.length, 66);
+  assert.equal(upstream.calls.sports.length, 9);
 });
 
 for (const [scope, ttlMs] of [
   ['live', 1000],
-  ['all', 1000],
   ['today', 3000],
   ['early', 10000],
 ]) {
@@ -261,7 +258,7 @@ for (const [scope, ttlMs] of [
       upstream,
       now: () => new Date(milliseconds),
     }, async (baseUrl) => {
-      const path = `/api/sports?scope=${scope}`;
+      const path = `/api/sports?scope=${scope}&sport=football`;
       await request(baseUrl, path, authorized());
       milliseconds += ttlMs - 1;
       await request(baseUrl, path, authorized());
@@ -286,9 +283,10 @@ test('expired sports data is never returned when the refresh fails', async () =>
     async getBets() { return []; },
   };
   await withServer({ upstream, now: () => new Date(milliseconds) }, async (baseUrl) => {
-    const first = await request(baseUrl, '/api/sports?scope=live', authorized());
+    const path = '/api/sports?scope=live&sport=football';
+    const first = await request(baseUrl, path, authorized());
     milliseconds += 1000;
-    const second = await request(baseUrl, '/api/sports?scope=live', authorized());
+    const second = await request(baseUrl, path, authorized());
 
     assert.equal(first.status, 200);
     assert.equal(second.status, 503);
@@ -380,7 +378,11 @@ for (const [upstreamCode, status, publicCode] of [
       async getBets() { throw new Error('unused'); },
     };
     await withServer({ upstream }, async (baseUrl) => {
-      const response = await request(baseUrl, '/api/sports', authorized());
+      const response = await request(
+        baseUrl,
+        '/api/sports?scope=live&sport=football',
+        authorized(),
+      );
       assert.equal(response.status, status);
       assert.equal(response.body.error.code, publicCode);
       assert.equal(JSON.stringify(response.body).includes(secret), false);
@@ -395,7 +397,11 @@ test('unexpected upstream errors map to a sanitized 500 response', async () => {
     async getBets() { throw new Error('unused'); },
   };
   await withServer({ upstream }, async (baseUrl) => {
-    const response = await request(baseUrl, '/api/sports', authorized());
+    const response = await request(
+      baseUrl,
+      '/api/sports?scope=live&sport=football',
+      authorized(),
+    );
     assert.equal(response.status, 500);
     assert.equal(response.body.error.code, 'INTERNAL_ERROR');
     assert.equal(JSON.stringify(response.body).includes('private implementation detail'), false);

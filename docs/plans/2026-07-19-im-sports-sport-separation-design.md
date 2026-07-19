@@ -7,7 +7,7 @@
 接口继续使用：
 
 ```http
-GET /api/sports?scope=live|today|early|all&sport=football|basketball|tennis
+GET /api/sports?scope=live|today|early&sport=football|basketball|tennis
 ```
 
 `scope` 与 `sport` 都是必填参数。每个赛事必须同时返回 `scope` 和 `sport`，缓存键继续由两者共同组成。WebSocket 仍维持当前已经验证的 `live + football` 能力；本次不假设篮球或网球的站内推送协议已经验证。

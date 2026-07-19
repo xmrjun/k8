@@ -89,7 +89,10 @@ test('smokeTest checks health and proves the protected route accepted the token'
 
   assert.deepEqual(result, { health: 'ok', protected_status: 502 });
   assert.equal(calls[0].url, 'http://127.0.0.1:8788/health');
-  assert.equal(calls[1].url, 'http://127.0.0.1:8788/api/sports');
+  assert.equal(
+    calls[1].url,
+    'http://127.0.0.1:8788/api/sports?scope=live&sport=football',
+  );
   assert.equal(calls[1].options.headers.authorization, `Bearer ${token}`);
   assert.equal(JSON.stringify(result).includes(token), false);
 });

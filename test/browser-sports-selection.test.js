@@ -70,6 +70,7 @@ function selectionDocument({
   requestedSport,
   missingSport = false,
   duplicateLive = false,
+  delayedScopeSport = false,
 } = {}) {
   const sportLabel = {
     football: '足球',
@@ -95,14 +96,21 @@ function selectionDocument({
     text: '早盘',
     onClick(tab) {
       tab.classList.add('active');
+      if (delayedScopeSport) {
+        setTimeout(() => {
+          allItems = [sportItem(sportLabel, { onSelect: selectRequested })];
+        }, 3);
+      }
     },
   });
   const todayTab = element({ text: '今日', classes: ['active'] });
-  const allItems = [
-    sportItem(missingSport ? '足球' : sportLabel, { onSelect: selectRequested }),
-  ];
+  let allItems = [sportItem(
+    missingSport || delayedScopeSport ? '足球' : sportLabel,
+    { onSelect: selectRequested },
+  )];
   const allSection = section('所有体育', allItems, {
     '.leftmenu_tab_filter .tab_label': [todayTab, earlyTab],
+    '.leftmenu_sports_item': () => allItems,
   });
   const sections = duplicateLive
     ? [liveSection, section('滚球中', liveItems), allSection]
@@ -141,6 +149,15 @@ test('selects basketball only inside the live sports group', async () => {
 
 test('selects early before selecting basketball inside all sports', async () => {
   assert.deepEqual(await evaluateSelection({ scope: 'early', sport: 'basketball' }), {
+    status: 'ready',
+  });
+});
+
+test('waits for the early sport list to replace the today sport list', async () => {
+  assert.deepEqual(await evaluateSelection(
+    { scope: 'early', sport: 'basketball' },
+    { delayedScopeSport: true },
+  ), {
     status: 'ready',
   });
 });

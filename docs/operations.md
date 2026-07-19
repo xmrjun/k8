@@ -40,6 +40,16 @@ API 或隧道退出，都会使公网行情不可用。
 HTTP 接口继续使用独立的 `API_TOKEN`。实时接口是：
 
 ```text
+GET /api/sports?scope=live|today|early&sport=football|basketball|tennis
+```
+
+`scope` 和 `sport` 都必须提供。HTTP 读取会在专用 Chrome 中自动选择对应的范围和
+体育项目；滚球、今日、早盘各自使用自己的体育项目列表。某个范围当前没有该项目时
+返回空赛事列表，不会读取另一个范围的数据。
+
+实时接口是：
+
+```text
 wss://k8.nbmrjun.top/ws/sports?token=<WS_TOKEN>
 ```
 
@@ -74,7 +84,8 @@ K8_WS_BASE_URL=wss://k8.nbmrjun.top npm run smoke:ws
 ## 故障与回滚
 
 - `9223` 不可访问：先启动桌面上的 K8 专用 Chrome。
-- `503`：确认专用 Chrome 的 IM 体育页仍登录并停留在滚球赛事页面。
+- `503`：确认专用 Chrome 的 IM 体育页仍登录并保持打开。
+- `400`：确认 HTTP 请求同时提供支持的 `scope` 和 `sport`，不要使用 `scope=all`。
 - `1012`：上游超过 15 秒无有效数据或 CDP 断开；客户端应重连。
 - 未知上游增量不会被猜测应用；服务会限频刷新页面，等待新的完整快照。
 - 如需临时回滚到 Apple Events，可设置 `BROWSER_TRANSPORT=apple_events`，但实时

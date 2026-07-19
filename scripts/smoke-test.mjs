@@ -18,6 +18,8 @@ export async function smokeTest({
   const base = new URL(baseUrl);
   const healthUrl = new URL('/health', base);
   const sportsUrl = new URL('/api/sports', base);
+  sportsUrl.searchParams.set('scope', 'live');
+  sportsUrl.searchParams.set('sport', 'football');
 
   const healthResponse = await fetchImpl(healthUrl.toString());
   const healthBody = await readJson(healthResponse, 'health endpoint');

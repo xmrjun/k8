@@ -21,7 +21,7 @@ Cloudflare 只转发 `127.0.0.1:8788`。Chrome 调试端口 `9223` 必须始终�
 | 接口 | 状态 | 说明 |
 | --- | --- | --- |
 | `GET /health` | 可用 | 无需鉴权的进程健康检查 |
-| `GET /api/sports` | 可用 | 赛事、市场和赔率的只读快照 |
+| `GET /api/sports?scope=…&sport=…` | 可用 | 按范围和体育项目读取赛事、市场与赔率快照 |
 | `GET /api/sports/account` | 可用 | IM 体育余额与未结算金额，不缓存 |
 | `GET /api/balance` | 可用 | 主账户钱包；要求对应账户页面保持登录 |
 | `WS /ws/sports` | 可用 | IM 体育实时快照、赔率增量、比分和心跳 |
@@ -126,16 +126,23 @@ curl http://127.0.0.1:8788/health
 GET /api/sports?scope=<范围>&sport=<体育项目>
 ```
 
-`scope` 可用值：
+`scope` 和 `sport` 都是必填参数。`scope` 可用值：
 
 | 值 | 含义 |
 | --- | --- |
 | `live` | 滚球中 |
 | `today` | 今日赛事 |
 | `early` | 早盘赛事 |
-| `all` | 页面内所有已识别范围 |
 
-当前服务器可直接使用的足球、篮球示例：
+`sport` 可用值：
+
+| 值 | 含义 | 已验证市场 |
+| --- | --- | --- |
+| `football` | 足球 | `1x2`、`handicap`、`total` |
+| `basketball` | 篮球 | `moneyline`、`handicap`、`total` |
+| `tennis` | 网球 | `moneyline`、`handicap`、`total`、`odd_even` |
+
+完整的九个端点组合：
 
 ```text
 GET /api/sports?scope=live&sport=football
@@ -144,6 +151,9 @@ GET /api/sports?scope=early&sport=football
 GET /api/sports?scope=live&sport=basketball
 GET /api/sports?scope=today&sport=basketball
 GET /api/sports?scope=early&sport=basketball
+GET /api/sports?scope=live&sport=tennis
+GET /api/sports?scope=today&sport=tennis
+GET /api/sports?scope=early&sport=tennis
 ```
 
 读取滚球足球：
@@ -192,24 +202,40 @@ curl \
         "starts_at": "2026-07-19T12:00:00.000Z",
         "home": "...",
         "away": "...",
-        "markets": []
+        "markets": [
+          {
+            "period": "full_time",
+            "type": "moneyline",
+            "selections": [
+              {
+                "selection_key": "...:full_time:moneyline:home",
+                "name": "home",
+                "decimal_odds": "1.91",
+                "display_odds": "0.91",
+                "odds_format": "hong_kong",
+                "available": true
+              }
+            ]
+          }
+        ]
       }
     ],
     "count": 1,
     "truncated": false
   },
   "source": "im-sports-browser",
-  "fetchedAt": "2026-07-19T00:00:00.000Z",
-  "requestId": "..."
+  "fetched_at": "2026-07-19T00:00:00.000Z",
+  "request_id": "..."
 }
 ```
 
 说明：
 
-- `sport=football` 表示足球，`sport=basketball` 表示篮球。
-- 省略 `sport` 会返回指定范围内所有已识别体育项目。
-- 省略 `scope` 等同于 `scope=all`。
-- `today`、`early` 和篮球当前通过 HTTP 页面快照读取。
+- 页面上的 `滚球中`、`所有体育 → 今日`、`所有体育 → 早盘`各有独立的体育项目列表；API 会先选择范围，再只在该范围中选择项目。
+- 请求缺少任一参数、使用 `scope=all`、未知值、空值或重复参数都会返回 `400 INVALID_REQUEST`。
+- 当前 HTTP 自动选择只支持足球、篮球和网球；某个范围当前没有请求的项目时，成功返回 `events=[]`。
+- `period` 当前可为 `full_time` 或 `first_half`；网球当前只发布已验证的 `full_time`。
+- `decimal_odds` 是十进制赔率，`display_odds` 保留页面显示值，`available=false` 表示锁盘或暂不可用。
 - WebSocket 实时推送当前仍只发布经过验证的 `live + football`；不要把 HTTP 快照能力误认为对应的实时推送已经完成。
 
 读取 IM 体育账户摘要：
@@ -220,7 +246,7 @@ curl \
   "http://127.0.0.1:8788/api/sports/account"
 ```
 
-成功响应统一包含 `data`、`source`、`fetchedAt` 和 `requestId`。`401` 表示 API 令牌无效，`503` 通常表示专用 Chrome 或目标页面不可用，`502` 表示登录失效或页面结构发生变化。
+成功响应统一包含 `data`、`source`、`fetched_at` 和 `request_id`。`401` 表示 API 令牌无效，`503` 通常表示专用 Chrome 或目标页面不可用，`502` 表示登录失效或页面结构发生变化。
 
 ### 注单接口状态
 

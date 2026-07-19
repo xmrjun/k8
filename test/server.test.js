@@ -282,9 +282,12 @@ test('createHttpServer serves health while production upstream remains disabled'
   const { port } = server.address();
   try {
     const health = await fetch(`http://127.0.0.1:${port}/health`);
-    const sports = await fetch(`http://127.0.0.1:${port}/api/sports`, {
-      headers: { authorization: `Bearer ${config.apiToken}` },
-    });
+    const sports = await fetch(
+      `http://127.0.0.1:${port}/api/sports?scope=live&sport=football`,
+      {
+        headers: { authorization: `Bearer ${config.apiToken}` },
+      },
+    );
     assert.equal(health.status, 200);
     assert.equal(sports.status, 502);
     assert.equal((await sports.json()).error.code, CODES.BAD_RESPONSE);

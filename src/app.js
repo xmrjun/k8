@@ -11,34 +11,37 @@ const {
   internalError,
 } = require('./response');
 const { CODES } = require('./upstream/errors');
-const { SPORT_KEYS } = require('./browser/readers/sports');
+const {
+  SELECTABLE_SCOPE_KEYS,
+  SELECTABLE_SPORT_KEYS,
+} = require('./browser/readers/sports-selection');
 
 const ACCOUNT_SOURCE = 'k81128';
 const SPORTS_SOURCE = 'im-sports-browser';
-const SPORTS_SCOPES = new Set(['all', 'live', 'today', 'early']);
-const SPORTS = new Set(SPORT_KEYS);
+const SPORTS_SCOPES = new Set(SELECTABLE_SCOPE_KEYS);
+const SPORTS = new Set(SELECTABLE_SPORT_KEYS);
 const SPORTS_CACHE_TTL_MS = Object.freeze({
-  all: 1000,
   live: 1000,
   today: 3000,
   early: 10000,
 });
-const MAX_SPORTS_CACHE_ENTRIES = 64;
+const MAX_SPORTS_CACHE_ENTRIES = SELECTABLE_SCOPE_KEYS.length
+  * SELECTABLE_SPORT_KEYS.length;
 
 function parseSportsQuery(searchParams) {
   for (const name of searchParams.keys()) {
     if (name !== 'scope' && name !== 'sport') return null;
   }
-  if (searchParams.getAll('scope').length > 1
-    || searchParams.getAll('sport').length > 1) {
+  if (searchParams.getAll('scope').length !== 1
+    || searchParams.getAll('sport').length !== 1) {
     return null;
   }
 
-  const scope = searchParams.has('scope') ? searchParams.get('scope') : 'all';
+  const scope = searchParams.get('scope');
   if (!SPORTS_SCOPES.has(scope)) return null;
 
-  const sport = searchParams.has('sport') ? searchParams.get('sport') : undefined;
-  if (sport !== undefined && !SPORTS.has(sport)) return null;
+  const sport = searchParams.get('sport');
+  if (!SPORTS.has(sport)) return null;
   return { scope, sport };
 }
 
@@ -150,7 +153,7 @@ function createApp({
           return;
         }
         const currentTime = now();
-        const cacheKey = `${options.scope}:${options.sport || ''}`;
+        const cacheKey = `${options.scope}:${options.sport}`;
         let cached = sportsCache.get(cacheKey);
         if (!cached || currentTime.getTime() >= cached.expiresAt) {
           const data = await upstream.getSports(options);
