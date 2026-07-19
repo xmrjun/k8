@@ -187,6 +187,75 @@ test('filters by scope and sport without changing page order', () => {
   assert.equal(result.events[0].event_id, '900000002');
 });
 
+test('normalizes a two-way basketball moneyline without a draw or line', () => {
+  const payload = fixture();
+  payload.sections[1].competitions[0].events[0].markets.unshift({
+    period: 'full_time',
+    type: 'moneyline',
+    selections: [
+      { name: 'home', display_odds: '0.75', available: true },
+      { name: 'away', display_odds: '1.05', available: true },
+    ],
+  });
+
+  const market = normalizeSportsPayload(payload, {
+    scope: 'today',
+    sport: 'basketball',
+  }).events[0].markets[0];
+
+  assert.equal(market.type, 'moneyline');
+  assert.deepEqual(
+    market.selections.map((selection) => selection.selection_key),
+    [
+      '900000002:full_time:moneyline:home',
+      '900000002:full_time:moneyline:away',
+    ],
+  );
+  assert.equal(Object.hasOwn(market.selections[0], 'line'), false);
+});
+
+test('keeps first-half markets separate from full-time markets', () => {
+  const payload = fixture();
+  const event = payload.sections[0].competitions[0].events[0];
+  event.markets.push({
+    period: 'first_half',
+    type: '1x2',
+    selections: [
+      { name: 'home', display_odds: '1.10', available: true },
+      { name: 'draw', display_odds: '0.90', available: true },
+      { name: 'away', display_odds: '1.20', available: true },
+    ],
+  });
+
+  const result = normalizeSportsPayload(payload, { scope: 'live', sport: 'football' });
+
+  assert.deepEqual(
+    result.events[0].markets.map((market) => `${market.period}:${market.type}`),
+    ['full_time:1x2', 'full_time:handicap', 'full_time:total', 'first_half:1x2'],
+  );
+});
+
+test('normalizes tennis total-games odd/even as a line-less market', () => {
+  const payload = fixture();
+  payload.sections[2].competitions[0].events[0].markets.push({
+    period: 'full_time',
+    type: 'odd_even',
+    selections: [
+      { name: 'odd', display_odds: '0.86', available: true },
+      { name: 'even', display_odds: '0.96', available: true },
+    ],
+  });
+
+  const market = normalizeSportsPayload(payload, {
+    scope: 'early',
+    sport: 'tennis',
+  }).events[0].markets.at(-1);
+
+  assert.equal(market.type, 'odd_even');
+  assert.deepEqual(market.selections.map((selection) => selection.name), ['odd', 'even']);
+  assert.equal(Object.hasOwn(market.selections[0], 'line'), false);
+});
+
 for (const [sportId, sport] of [
   ['1', 'football'],
   ['2', 'basketball'],

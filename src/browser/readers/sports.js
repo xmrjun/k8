@@ -32,11 +32,13 @@ const SPORTS = new Set([
   'water_polo',
 ]);
 const SPORT_KEYS = Object.freeze([...SPORTS]);
-const PERIODS = new Set(['full_time']);
+const PERIODS = new Set(['full_time', 'first_half']);
 const MARKET_SELECTIONS = Object.freeze({
   '1x2': new Set(['home', 'draw', 'away']),
+  moneyline: new Set(['home', 'away']),
   handicap: new Set(['home', 'away']),
   total: new Set(['over', 'under']),
+  odd_even: new Set(['odd', 'even']),
 });
 const EVENT_ID_PATTERN = /^\d{1,32}$/;
 const SCORE_PATTERN = /^\d{1,3}$/;
@@ -307,7 +309,7 @@ function normalizeSelection(selection, { eventId, period, type }) {
     selection_key: `${eventId}:${period}:${type}:${name}`,
     name,
   };
-  if (type !== '1x2') {
+  if (type === 'handicap' || type === 'total') {
     const line = requiredText(selection.line);
     if (!LINE_PATTERN.test(line)) throw schemaError();
     normalized.line = line;
