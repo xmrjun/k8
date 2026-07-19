@@ -101,12 +101,18 @@ function buildSportsExpression({ maxEvents = 500 } = {}) {
       ['handball', 'handball'], ['snooker', 'snooker'], ['cricket', 'cricket'],
       ['rugby', 'rugby'], ['golf', 'golf'], ['darts', 'darts'], ['boxing', 'boxing']
     ];
-    const sportFrom = (value, sportCode) => {
+    const verifiedSportIds = {
+      '1': 'football',
+      '2': 'basketball',
+      '3': 'tennis',
+    };
+    const sportFrom = (value, sportId) => {
       const lower = value.toLowerCase();
       const match = sportLabels.find(([label]) => lower.includes(label.toLowerCase()));
-      if (match) return match[1];
-      if (sportCode === '3') return 'football';
-      return null;
+      const headerSport = match?.[1] || null;
+      const idSport = verifiedSportIds[sportId] || null;
+      if (!idSport || (headerSport && headerSport !== idSport)) return null;
+      return idSport;
     };
     const headerTextFor = (wrap) => {
       const inside = text(one(wrap, '.eventlisting_header'));
@@ -203,7 +209,7 @@ function buildSportsExpression({ maxEvents = 500 } = {}) {
       const firstMatch = firstHref.match(/^\\/sev\\/(\\d+)\\/(\\d+)\\/(\\d+)\\/?$/);
       const headerText = headerTextFor(wrap);
       const scope = scopeFrom(headerText);
-      const sport = sportFrom(headerText, firstMatch?.[2]);
+      const sport = sportFrom(headerText, firstMatch?.[1]);
       if (!scope || !sport) {
         invalid = true;
         continue;

@@ -21,6 +21,69 @@ function schemaFailure(callback) {
   assert.throws(callback, (error) => error?.code === CODES.SCHEMA_CHANGED && !error.cause);
 }
 
+function domNode({
+  text = '',
+  selectors = {},
+  attributes = {},
+  classes = [],
+  parentElement = null,
+  previousElementSibling = null,
+} = {}) {
+  return {
+    textContent: text,
+    parentElement,
+    previousElementSibling,
+    classList: { contains(name) { return classes.includes(name); } },
+    querySelector(selector) {
+      return selectors[selector]?.[0] || null;
+    },
+    querySelectorAll(selector) {
+      return selectors[selector] || [];
+    },
+    getAttribute(name) {
+      return Object.hasOwn(attributes, name) ? attributes[name] : null;
+    },
+  };
+}
+
+function sportsExpressionDocument({ header, href }) {
+  const anchor = domNode({ attributes: { href } });
+  const home = domNode({ text: 'Synthetic Home' });
+  const away = domNode({ text: 'Synthetic Away' });
+  const league = domNode({ text: 'Synthetic League' });
+  const competition = domNode({ selectors: { '.competition_header_team': [league] } });
+  const row = domNode({
+    selectors: {
+      '.team a[href^="/sev/"]': [anchor],
+      '.teamname_title': [home, away],
+      '.score': [],
+      '.datetime': [],
+      '.info': [],
+    },
+    parentElement: competition,
+  });
+  const listingHeader = domNode({ text: header });
+  const wrap = domNode({
+    selectors: {
+      '.eventlisting_header': [listingHeader],
+      '.event_row': [row],
+    },
+  });
+  return domNode({
+    selectors: {
+      '.eventlisting_wrap': [wrap],
+      'input[type="password"], form[action*="login"], .login-form': [],
+    },
+  });
+}
+
+function evaluateSportsExpression(options) {
+  return JSON.parse(JSON.stringify(vm.runInNewContext(
+    buildSportsExpression({ maxEvents: 10 }),
+    { document: sportsExpressionDocument(options) },
+  )));
+}
+
 test('normalizes IM Sports events with stable markets and selection keys', () => {
   const result = normalizeSportsPayload(fixture(), { scope: 'all' });
 
@@ -122,6 +185,32 @@ test('filters by scope and sport without changing page order', () => {
 
   assert.equal(result.count, 1);
   assert.equal(result.events[0].event_id, '900000002');
+});
+
+for (const [sportId, sport] of [
+  ['1', 'football'],
+  ['2', 'basketball'],
+  ['3', 'tennis'],
+]) {
+  test(`uses /sev sport id ${sportId} as ${sport} when the header has no sport label`, () => {
+    const result = evaluateSportsExpression({
+      header: '滚球中',
+      href: `/sev/${sportId}/3/90000000${sportId}`,
+    });
+
+    assert.equal(result.status, 'ready');
+    assert.equal(result.sections[0].sport, sport);
+  });
+}
+
+test('rejects a conflict between /sev sport id and the event-listing header', () => {
+  assert.deepEqual(evaluateSportsExpression({
+    header: '滚球中 足球',
+    href: '/sev/2/3/900000002',
+  }), {
+    status: 'schema_changed',
+    sections: [],
+  });
 });
 
 test('adds one to Hong Kong odds as an exact decimal string', () => {
