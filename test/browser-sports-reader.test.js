@@ -46,27 +46,105 @@ function domNode({
   };
 }
 
-function sportsExpressionDocument({ header, href }) {
+function oddsWrap(displayOdds, { locked = false } = {}) {
+  return domNode({
+    selectors: {
+      '.odds': displayOdds === null ? [] : [domNode({ text: displayOdds })],
+      '.lock': locked ? [domNode()] : [],
+    },
+    classes: locked ? ['lock'] : [],
+  });
+}
+
+function marketCell({
+  classes = [],
+  lines = [],
+  odds = [],
+  total = false,
+} = {}) {
+  return domNode({
+    classes,
+    selectors: {
+      '.handi': lines.map((line) => domNode({ text: line })),
+      '.odds_wrap': odds,
+      '.ou': total ? [domNode({ text: '大' }), domNode({ text: '小' })] : [],
+    },
+  });
+}
+
+function periodNode({
+  winnerOdds,
+  handicapLines = [],
+  handicapOdds = [],
+  totalLines = [],
+  totalOdds = [],
+  oddEvenOdds = [],
+}) {
+  const winner = marketCell({
+    classes: ['event_even', 'double'],
+    odds: winnerOdds,
+  });
+  const cells = [
+    winner,
+    marketCell({ classes: ['event_even'], lines: handicapLines }),
+    marketCell({ classes: ['event_even', 'left'], odds: handicapOdds }),
+    marketCell({ classes: ['event_even'], lines: totalLines, total: true }),
+    marketCell({ classes: ['event_even', 'left'], odds: totalOdds }),
+  ];
+  if (oddEvenOdds.length > 0) {
+    cells.push(
+      marketCell({ classes: ['event_even'] }),
+      marketCell({ classes: ['event_even', 'left'], odds: oddEvenOdds }),
+    );
+  }
+  return domNode({
+    selectors: {
+      '.event_even.double': [winner],
+      '.event_even': cells,
+    },
+  });
+}
+
+function sportsExpressionDocument({ header, href, secondHref, periods = [] }) {
   const anchor = domNode({ attributes: { href } });
   const home = domNode({ text: 'Synthetic Home' });
   const away = domNode({ text: 'Synthetic Away' });
   const league = domNode({ text: 'Synthetic League' });
   const competition = domNode({ selectors: { '.competition_header_team': [league] } });
+  const info = periods.length > 0
+    ? domNode({ selectors: { '.header_info_inner': periods } })
+    : null;
   const row = domNode({
     selectors: {
       '.team a[href^="/sev/"]': [anchor],
       '.teamname_title': [home, away],
       '.score': [],
       '.datetime': [],
-      '.info': [],
+      '.info': info ? [info] : [],
     },
     parentElement: competition,
   });
+  const rows = [row];
+  if (secondHref) {
+    rows.push(domNode({
+      selectors: {
+        '.team a[href^="/sev/"]': [domNode({ attributes: { href: secondHref } })],
+        '.teamname_title': [
+          domNode({ text: 'Second Synthetic Home' }),
+          domNode({ text: 'Second Synthetic Away' }),
+        ],
+        '.score': [],
+        '.datetime': [],
+        '.info': [],
+      },
+      parentElement: competition,
+    }));
+  }
   const listingHeader = domNode({ text: header });
   const wrap = domNode({
     selectors: {
       '.eventlisting_header': [listingHeader],
-      '.event_row': [row],
+      '.event_row': rows,
     },
   });
   return domNode({
@@ -280,6 +358,95 @@ test('rejects a conflict between /sev sport id and the event-listing header', ()
     status: 'schema_changed',
     sections: [],
   });
+});
+
+test('rejects mixed sport ids inside one event-listing section', () => {
+  assert.deepEqual(evaluateSportsExpression({
+    header: '滚球中 足球',
+    href: '/sev/1/3/900000001',
+    secondHref: '/sev/2/3/900000002',
+  }), {
+    status: 'schema_changed',
+    sections: [],
+  });
+});
+
+test('DOM expression emits football 1X2 for full time and first half', () => {
+  const fullTime = periodNode({
+    winnerOdds: [oddsWrap('0.80'), oddsWrap('1.10'), oddsWrap('0.90')],
+  });
+  const firstHalf = periodNode({
+    winnerOdds: [oddsWrap('0.70'), oddsWrap('1.20'), oddsWrap('1.00')],
+  });
+
+  const event = evaluateSportsExpression({
+    header: '滚球中 足球',
+    href: '/sev/1/3/900000001',
+    periods: [fullTime, firstHalf],
+  }).sections[0].competitions[0].events[0];
+
+  assert.deepEqual(event.markets.map((market) => [market.period, market.type]), [
+    ['full_time', '1x2'],
+    ['first_half', '1x2'],
+  ]);
+  assert.deepEqual(
+    event.markets[0].selections.map((selection) => selection.name),
+    ['home', 'draw', 'away'],
+  );
+});
+
+test('DOM expression emits basketball moneyline, handicap, and total', () => {
+  const fullTime = periodNode({
+    winnerOdds: [oddsWrap('0.75'), oddsWrap('1.05')],
+    handicapLines: ['-3.5', '+3.5'],
+    handicapOdds: [oddsWrap('0.91'), oddsWrap('0.91')],
+    totalLines: ['175.5', '175.5'],
+    totalOdds: [oddsWrap('0.88'), oddsWrap('0.94')],
+  });
+
+  const markets = evaluateSportsExpression({
+    header: '滚球中 篮球',
+    href: '/sev/2/3/900000002',
+    periods: [fullTime],
+  }).sections[0].competitions[0].events[0].markets;
+
+  assert.deepEqual(markets.map((market) => market.type), [
+    'moneyline',
+    'handicap',
+    'total',
+  ]);
+  assert.deepEqual(
+    markets[0].selections.map((selection) => selection.name),
+    ['home', 'away'],
+  );
+});
+
+test('DOM expression emits tennis moneyline and total-games odd/even', () => {
+  const fullTime = periodNode({
+    winnerOdds: [oddsWrap('0.86'), oddsWrap('0.96')],
+    handicapLines: ['-1.5', '+1.5'],
+    handicapOdds: [oddsWrap('0.90'), oddsWrap('0.90')],
+    totalLines: ['22.5', '22.5'],
+    totalOdds: [oddsWrap('0.84'), oddsWrap('0.98')],
+    oddEvenOdds: [oddsWrap('0.87'), oddsWrap('0.95')],
+  });
+
+  const markets = evaluateSportsExpression({
+    header: '今日 网球',
+    href: '/sev/3/3/900000003',
+    periods: [fullTime],
+  }).sections[0].competitions[0].events[0].markets;
+
+  assert.deepEqual(markets.map((market) => market.type), [
+    'moneyline',
+    'handicap',
+    'total',
+    'odd_even',
+  ]);
+  assert.deepEqual(
+    markets.at(-1).selections.map((selection) => selection.name),
+    ['odd', 'even'],
+  );
 });
 
 test('adds one to Hong Kong odds as an exact decimal string', () => {

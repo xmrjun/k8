@@ -155,46 +155,66 @@ function buildSportsExpression({ maxEvents = 500 } = {}) {
       if (line !== undefined) selection.line = line;
       return selection;
     };
-    const marketsFor = (row) => {
+    const marketsFor = (row, sport) => {
       const info = one(row, '.info');
-      const periodRoot = one(info, '.header_info_inner') || info;
-      if (!periodRoot) return [];
+      if (!info) return [];
+      const discoveredPeriods = all(info, '.header_info_inner');
+      const periodRoots = (discoveredPeriods.length > 0 ? discoveredPeriods : [info])
+        .slice(0, sport === 'tennis' ? 1 : 2);
       const markets = [];
-      const double = one(periodRoot, '.event_even.double');
-      const winnerOdds = all(double, '.odds_wrap').slice(0, 3);
-      if (winnerOdds.length === 3) {
+      const addLineMarket = (cells, period, lineIndex, oddsIndex, type, names) => {
+        const lineCell = cells[lineIndex];
+        const oddsCell = cells[oddsIndex];
+        if (!lineCell || !oddsCell || !hasClass(oddsCell, 'left')) return;
+        if (type === 'total' && all(lineCell, '.ou').length === 0) return;
+        const lines = all(lineCell, '.handi').map(text).filter(Boolean).slice(0, 2);
+        const odds = all(oddsCell, '.odds_wrap').slice(0, 2);
+        if (lines.length !== 2 || odds.length !== 2) return;
         markets.push({
-          period: 'full_time',
-          type: '1x2',
-          selections: ['home', 'draw', 'away'].map(
-            (name, index) => oddsSelection(winnerOdds[index], name),
-          ),
+          period,
+          type,
+          selections: names.map((name, selectionIndex) => oddsSelection(
+            odds[selectionIndex],
+            name,
+            lines[selectionIndex],
+          )),
         });
-      }
-
-      const cells = all(periodRoot, '.event_even');
-      for (let index = 0; index < cells.length; index += 1) {
-        const cell = cells[index];
-        if (hasClass(cell, 'double') || hasClass(cell, 'left')) continue;
-        const lines = all(cell, '.handi').map(text).filter(Boolean).slice(0, 2);
-        if (lines.length !== 2) continue;
-        const next = cells[index + 1];
-        if (!next || !hasClass(next, 'left')) continue;
-        const odds = all(next, '.odds_wrap').slice(0, 2);
-        if (odds.length !== 2) continue;
-        const isTotal = all(cell, '.ou').length > 0;
-        const names = isTotal ? ['over', 'under'] : ['home', 'away'];
-        markets.push({
-          period: 'full_time',
-          type: isTotal ? 'total' : 'handicap',
-          selections: names.map(
-            (name, selectionIndex) => oddsSelection(
-              odds[selectionIndex],
-              name,
-              lines[selectionIndex],
+      };
+      for (let periodIndex = 0; periodIndex < periodRoots.length; periodIndex += 1) {
+        const periodRoot = periodRoots[periodIndex];
+        const period = periodIndex === 0 ? 'full_time' : 'first_half';
+        const cells = all(periodRoot, '.event_even');
+        const double = one(periodRoot, '.event_even.double');
+        const winnerNames = sport === 'football'
+          ? ['home', 'draw', 'away']
+          : ['home', 'away'];
+        const winnerOdds = all(double, '.odds_wrap').slice(0, winnerNames.length);
+        if (winnerOdds.length === winnerNames.length) {
+          markets.push({
+            period,
+            type: sport === 'football' ? '1x2' : 'moneyline',
+            selections: winnerNames.map(
+              (name, index) => oddsSelection(winnerOdds[index], name),
             ),
-          ),
-        });
+          });
+        }
+
+        addLineMarket(cells, period, 1, 2, 'handicap', ['home', 'away']);
+        addLineMarket(cells, period, 3, 4, 'total', ['over', 'under']);
+
+        if (sport === 'tennis') {
+          const oddsCell = cells[6];
+          const odds = all(oddsCell, '.odds_wrap').slice(0, 2);
+          if (cells[5] && oddsCell && hasClass(oddsCell, 'left') && odds.length === 2) {
+            markets.push({
+              period,
+              type: 'odd_even',
+              selections: ['odd', 'even'].map(
+                (name, index) => oddsSelection(odds[index], name),
+              ),
+            });
+          }
+        }
       }
       return markets;
     };
@@ -226,7 +246,8 @@ function buildSportsExpression({ maxEvents = 500 } = {}) {
         const hrefMatch = href.match(/^\\/sev\\/(\\d+)\\/(\\d+)\\/(\\d+)\\/?$/);
         const teams = all(row, '.teamname_title').map(text).filter(Boolean).slice(0, 2);
         const league = leagueFor(row, wrap);
-        if (!hrefMatch || teams.length !== 2 || !league) {
+        const rowSport = verifiedSportIds[hrefMatch?.[1]] || null;
+        if (!hrefMatch || rowSport !== sport || teams.length !== 2 || !league) {
           invalid = true;
           continue;
         }
@@ -241,7 +262,7 @@ function buildSportsExpression({ maxEvents = 500 } = {}) {
             ? { home: scoreParts[0], away: scoreParts[1] }
             : null,
           clock: text(one(row, '.datetime')) || null,
-          markets: marketsFor(row),
+          markets: marketsFor(row, sport),
         };
         let competition = competitionByLeague.get(league);
         if (!competition) {
