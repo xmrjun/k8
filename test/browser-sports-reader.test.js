@@ -136,6 +136,24 @@ test('adds one to Hong Kong odds as an exact decimal string', () => {
   assert.equal(selection.decimal_odds, '1.123456789012345678');
 });
 
+test('preserves signed Asian quarter lines with an unsigned second value', () => {
+  const payload = fixture();
+  const markets = payload.sections[0].competitions[0].events[0].markets;
+  markets[1].selections[0].line = '-0.5/1';
+  markets[1].selections[1].line = '+0.5/1';
+  markets[2].selections[0].line = '2.5/3';
+  markets[2].selections[1].line = '2.5/3';
+
+  const result = normalizeSportsPayload(payload, { scope: 'live' });
+
+  assert.deepEqual(
+    result.events[0].markets.slice(1).flatMap(
+      (market) => market.selections.map((selection) => selection.line),
+    ),
+    ['-0.5/1', '+0.5/1', '2.5/3', '2.5/3'],
+  );
+});
+
 test('merges repeated event rows when identity fields agree', () => {
   const payload = fixture();
   const competition = payload.sections[0].competitions[0];

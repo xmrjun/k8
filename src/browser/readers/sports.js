@@ -41,7 +41,7 @@ const MARKET_SELECTIONS = Object.freeze({
 const EVENT_ID_PATTERN = /^\d{1,32}$/;
 const SCORE_PATTERN = /^\d{1,3}$/;
 const DECIMAL_PATTERN = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
-const LINE_PATTERN = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?$/;
+const LINE_PATTERN = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:\/(?:0|[1-9]\d*)(?:\.\d+)?)?$/;
 
 function schemaError() {
   return upstreamError(CODES.SCHEMA_CHANGED, 'IM Sports page schema changed');
