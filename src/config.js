@@ -61,17 +61,22 @@ function browserCdpUrl() {
   return parsed.origin;
 }
 
-function browserPageOrigin() {
-  const rawValue = process.env.BROWSER_PAGE_ORIGIN || 'https://k81128.com';
+function httpsOriginSetting(name, fallback) {
+  const rawValue = process.env[name] || fallback;
   let parsed;
   try {
     parsed = new URL(rawValue);
   } catch {
-    throw new Error('BROWSER_PAGE_ORIGIN must be a valid https URL');
+    throw new Error(`${name} must be a valid https origin without path, query, or fragment`);
   }
 
-  if (parsed.protocol !== 'https:' || parsed.username || parsed.password) {
-    throw new Error('BROWSER_PAGE_ORIGIN must be a valid https URL');
+  if (parsed.protocol !== 'https:'
+    || parsed.username
+    || parsed.password
+    || parsed.pathname !== '/'
+    || parsed.search
+    || parsed.hash) {
+    throw new Error(`${name} must be a valid https origin without path, query, or fragment`);
   }
   return parsed.origin;
 }
@@ -105,7 +110,14 @@ function loadConfig() {
       'must be a non-negative integer',
     ),
     browserCdpUrl: browserCdpUrl(),
-    browserPageOrigin: browserPageOrigin(),
+    browserPageOrigin: httpsOriginSetting(
+      'BROWSER_PAGE_ORIGIN',
+      'https://k81128.com',
+    ),
+    browserSportsOrigin: httpsOriginSetting(
+      'BROWSER_SPORTS_ORIGIN',
+      'https://imsb-fxnag.utoyen.com:2053',
+    ),
     browserOperationTimeoutMs: integerSetting(
       'BROWSER_OPERATION_TIMEOUT_MS',
       15000,
@@ -127,6 +139,7 @@ function publicConfig() {
       : '',
     sportsCacheMs: config.sportsCacheMs,
     browserPageOrigin: config.browserPageOrigin,
+    browserSportsOrigin: config.browserSportsOrigin,
     browserOperationTimeoutMs: config.browserOperationTimeoutMs,
   };
 }

@@ -117,6 +117,19 @@ test('gateway rejects unsafe CDP origins before making a request', async () => {
   assert.equal(fetchCalled, false);
 });
 
+for (const pageOrigin of [
+  'https://k81128.com/sports',
+  'https://k81128.com?token=must-not-be-configured',
+  'https://k81128.com/#sports',
+]) {
+  test(`gateway rejects page allow-list values that are not pure origins: ${pageOrigin}`, () => {
+    assert.throws(() => createBrowserGateway({
+      cdpUrl: 'http://127.0.0.1:9223',
+      pageOrigin,
+    }), /Page origin must be a valid https origin without path, query, or fragment/);
+  });
+}
+
 test('gateway rejects remote debugger WebSocket URLs returned by target discovery', async () => {
   const gateway = createBrowserGateway({
     cdpUrl: 'http://127.0.0.1:9223',

@@ -46,6 +46,7 @@ test('loadConfig defaults to the loopback Chrome browser bridge', () => {
       sportsCacheMs: 5000,
       browserCdpUrl: 'http://127.0.0.1:9223',
       browserPageOrigin: 'https://k81128.com',
+      browserSportsOrigin: 'https://imsb-fxnag.utoyen.com:2053',
       browserOperationTimeoutMs: 15000,
     });
   });
@@ -61,7 +62,8 @@ test('loadConfig reads all configuration from process.env', () => {
     UPSTREAM_MODE: 'http',
     SPORTS_CACHE_MS: '2500',
     BROWSER_CDP_URL: 'http://[::1]:9333',
-    BROWSER_PAGE_ORIGIN: 'https://K81128.com/path-is-ignored',
+    BROWSER_PAGE_ORIGIN: 'https://K81128.com',
+    BROWSER_SPORTS_ORIGIN: 'https://IMSB-FXNAG.UTOYEN.COM:2053',
     BROWSER_OPERATION_TIMEOUT_MS: '9000',
   }, () => {
     assert.deepEqual(loadConfig(), {
@@ -74,6 +76,7 @@ test('loadConfig reads all configuration from process.env', () => {
       sportsCacheMs: 2500,
       browserCdpUrl: 'http://[::1]:9333',
       browserPageOrigin: 'https://k81128.com',
+      browserSportsOrigin: 'https://imsb-fxnag.utoyen.com:2053',
       browserOperationTimeoutMs: 9000,
     });
   });
@@ -98,6 +101,7 @@ test('publicConfig exposes only non-secret diagnostics', () => {
       upstreamOrigin: 'https://api.example.test',
       sportsCacheMs: 5000,
       browserPageOrigin: 'https://k81128.com',
+      browserSportsOrigin: 'https://imsb-fxnag.utoyen.com:2053',
       browserOperationTimeoutMs: 15000,
     });
     assert.equal(serialized.includes(apiToken), false);
@@ -135,12 +139,37 @@ for (const browserPageOrigin of [
   'http://k81128.com',
   'file:///tmp/k81128',
   'not a URL',
+  'https://k81128.com/sports',
+  'https://k81128.com?token=must-not-be-configured',
+  'https://k81128.com/#sports',
 ]) {
   test(`loadConfig rejects unsafe BROWSER_PAGE_ORIGIN ${browserPageOrigin}`, () => {
     withEnv({ API_TOKEN: 'a'.repeat(32), BROWSER_PAGE_ORIGIN: browserPageOrigin }, () => {
       assert.throws(
         () => loadConfig(),
-        /BROWSER_PAGE_ORIGIN must be a valid https URL/,
+        /BROWSER_PAGE_ORIGIN must be a valid https origin without path, query, or fragment/,
+      );
+    });
+  });
+}
+
+for (const browserSportsOrigin of [
+  'http://imsb.example.test:2053',
+  'file:///tmp/imsb',
+  'not a URL',
+  'https://user:secret@imsb.example.test:2053',
+  'https://imsb.example.test:2053/sports',
+  'https://imsb.example.test:2053?token=must-not-be-configured',
+  'https://imsb.example.test:2053/#sports',
+]) {
+  test(`loadConfig rejects unsafe BROWSER_SPORTS_ORIGIN ${browserSportsOrigin}`, () => {
+    withEnv({
+      API_TOKEN: 'a'.repeat(32),
+      BROWSER_SPORTS_ORIGIN: browserSportsOrigin,
+    }, () => {
+      assert.throws(
+        () => loadConfig(),
+        /BROWSER_SPORTS_ORIGIN must be a valid https origin without path, query, or fragment/,
       );
     });
   });

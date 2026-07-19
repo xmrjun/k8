@@ -26,10 +26,15 @@ function allowedPageOrigin(value) {
   try {
     parsed = new URL(value);
   } catch {
-    throw new TypeError('Page origin must be a valid https URL');
+    throw new TypeError('Page origin must be a valid https origin without path, query, or fragment');
   }
-  if (parsed.protocol !== 'https:' || parsed.username || parsed.password) {
-    throw new TypeError('Page origin must be a valid https URL');
+  if (parsed.protocol !== 'https:'
+    || parsed.username
+    || parsed.password
+    || parsed.pathname !== '/'
+    || parsed.search
+    || parsed.hash) {
+    throw new TypeError('Page origin must be a valid https origin without path, query, or fragment');
   }
   return parsed.origin;
 }
