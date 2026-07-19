@@ -16,6 +16,17 @@ function reader(name) {
   };
 }
 
+function selectionReader() {
+  return {
+    buildExpression(options) {
+      return `sports-selection:${JSON.stringify(options || {})}`;
+    },
+    normalize(value) {
+      return value.selection || { empty: false };
+    },
+  };
+}
+
 function gateway(name, calls) {
   return {
     async evaluate(expression, options) {
@@ -36,6 +47,7 @@ test('sports reads use only the sports gateway and preserve query options', asyn
     betsGateway: gateway('bets', calls),
     queue: createOperationQueue(),
     readers: {
+      sportsSelection: selectionReader(),
       sports: reader('sports-reader'),
       sportsAccount: reader('sports-account-reader'),
       balance: reader('balance-reader'),
@@ -50,9 +62,39 @@ test('sports reads use only the sports gateway and preserve query options', asyn
     value: { from: 'sports' },
     options: { scope: 'live', sport: 'football' },
   });
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].name, 'sports');
+  assert.equal(calls.length, 2);
+  assert.match(calls[0].expression, /sports-selection/);
+  assert.equal(calls[1].name, 'sports');
   assert.equal(calls[0].options.signal instanceof AbortSignal, true);
+});
+
+test('verified missing scope-specific sport returns an empty result without reading events', async () => {
+  const calls = [];
+  const sportsGateway = {
+    async evaluate(expression, options) {
+      calls.push({ expression, options });
+      return { selection: { empty: true } };
+    },
+    async close() {},
+  };
+  const upstream = createBrowserUpstream({
+    sportsGateway,
+    accountGateway: gateway('account', calls),
+    betsGateway: gateway('bets', calls),
+    queue: createOperationQueue(),
+    readers: {
+      sportsSelection: selectionReader(),
+      sports: reader('sports-reader'),
+    },
+  });
+
+  assert.deepEqual(await upstream.getSports({ scope: 'early', sport: 'basketball' }), {
+    events: [],
+    count: 0,
+    truncated: false,
+  });
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].expression, /sports-selection/);
 });
 
 test('sports account reads use only the sports gateway', async () => {
@@ -63,6 +105,7 @@ test('sports account reads use only the sports gateway', async () => {
     betsGateway: gateway('bets', calls),
     queue: createOperationQueue(),
     readers: {
+      sportsSelection: selectionReader(),
       sports: reader('sports-reader'),
       sportsAccount: reader('sports-account-reader'),
       balance: reader('balance-reader'),
@@ -122,6 +165,7 @@ test('sports and account browser operations share one serial queue', async () =>
     betsGateway: delayedGateway,
     queue: createOperationQueue(),
     readers: {
+      sportsSelection: selectionReader(),
       sports: reader('sports-reader'),
       sportsAccount: reader('sports-account-reader'),
       balance: reader('balance-reader'),
@@ -130,7 +174,7 @@ test('sports and account browser operations share one serial queue', async () =>
   });
 
   await Promise.all([
-    upstream.getSports(),
+    upstream.getSports({ scope: 'live', sport: 'football' }),
     upstream.getSportsAccount(),
     upstream.getBalance(),
     upstream.getBets(),
@@ -158,7 +202,7 @@ test('unknown gateway errors are replaced with a sanitized browser error', async
   });
 
   await assert.rejects(
-    upstream.getSports(),
+    upstream.getSports({ scope: 'live', sport: 'football' }),
     (error) => error.code === CODES.BROWSER_UNAVAILABLE
       && !error.cause
       && !JSON.stringify(error).includes(secret),
@@ -183,7 +227,10 @@ test('trusted browser, timeout, auth, and schema errors preserve only stable cod
       queue: createOperationQueue(),
       readers: { sports: reader('sports-reader') },
     });
-    await assert.rejects(upstream.getSports(), (error) => error.code === code && !error.cause);
+    await assert.rejects(
+      upstream.getSports({ scope: 'live', sport: 'football' }),
+      (error) => error.code === code && !error.cause,
+    );
   }
 });
 
@@ -208,7 +255,10 @@ test('sports failure never falls back to the account page', async () => {
     readers: { sports: reader('sports-reader') },
   });
 
-  await assert.rejects(upstream.getSports(), (error) => error.code === CODES.BROWSER_UNAVAILABLE);
+  await assert.rejects(
+    upstream.getSports({ scope: 'live', sport: 'football' }),
+    (error) => error.code === CODES.BROWSER_UNAVAILABLE,
+  );
   assert.equal(accountCalls, 0);
 });
 

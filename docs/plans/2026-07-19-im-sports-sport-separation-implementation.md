@@ -89,7 +89,35 @@ Run: `node --test test/browser-sports-reader.test.js`
 
 Expected: PASS.
 
-### Task 4: Verify HTTP filtering and documentation
+### Task 4: Select the scope-specific sport before reading
+
+**Files:**
+- Create: `src/browser/readers/sports-selection.js`
+- Create: `test/browser-sports-selection.test.js`
+- Modify: `src/upstream/browser.js`
+- Modify: `test/browser-upstream.test.js`
+
+**Step 1: Write failing selection-expression tests**
+
+Use synthetic DOM containers to assert that `live + basketball` selects basketball only inside the `滚球中` group, while `early + basketball` selects `早盘` and then basketball only inside `所有体育`. Assert that a missing project returns a verified empty marker and ambiguous or unknown structures return `schema_changed`.
+
+**Step 2: Run tests to verify RED**
+
+Run: `node --test test/browser-sports-selection.test.js test/browser-upstream.test.js`
+
+Expected: FAIL because no scope-specific selection reader exists and the upstream performs only one evaluation.
+
+**Step 3: Implement minimal selection and upstream sequencing**
+
+Build a fixed expression from allow-listed `scope` and `sport` values. Execute selection and sports reading inside one serialized queue operation, use bounded polling, and return a truthful empty result when the selected scope has no requested sport.
+
+**Step 4: Run tests to verify GREEN**
+
+Run: `node --test test/browser-sports-selection.test.js test/browser-upstream.test.js`
+
+Expected: PASS.
+
+### Task 5: Verify HTTP filtering and documentation
 
 **Files:**
 - Modify: `test/app.test.js`
@@ -98,7 +126,7 @@ Expected: PASS.
 
 **Step 1: Add or tighten endpoint tests**
 
-Assert separate upstream calls and cache keys for football, basketball, and tennis across supported scopes. Confirm unknown and duplicate `sport` parameters remain rejected.
+Require exactly one supported `scope` and one supported `sport`. Assert separate upstream calls and cache keys for football, basketball, and tennis across supported scopes. Confirm omitted, unknown, empty, and duplicate parameters are rejected.
 
 **Step 2: Run endpoint tests**
 

@@ -2,6 +2,10 @@
 
 const { buildSportsExpression, normalizeSportsPayload } = require('../browser/readers/sports');
 const {
+  buildSportsSelectionExpression,
+  normalizeSportsSelectionPayload,
+} = require('../browser/readers/sports-selection');
+const {
   buildSportsAccountExpression,
   normalizeSportsAccountPayload,
 } = require('../browser/readers/sports-account');
@@ -14,6 +18,11 @@ const KNOWN_CODES = new Set(Object.values(CODES));
 const sportsReader = Object.freeze({
   buildExpression: () => buildSportsExpression({ maxEvents: 500 }),
   normalize: normalizeSportsPayload,
+});
+
+const sportsSelectionReader = Object.freeze({
+  buildExpression: buildSportsSelectionExpression,
+  normalize: normalizeSportsSelectionPayload,
 });
 
 const sportsAccountReader = Object.freeze({
@@ -54,6 +63,7 @@ function createBrowserUpstream({
   }
 
   const selectedReaders = {
+    sportsSelection: readers.sportsSelection || sportsSelectionReader,
     sports: readers.sports || sportsReader,
     sportsAccount: readers.sportsAccount || sportsAccountReader,
     balance: readers.balance || balanceReader,
@@ -75,12 +85,35 @@ function createBrowserUpstream({
     }
   }
 
+  async function getSports(options) {
+    try {
+      const selectionReader = selectedReaders.sportsSelection;
+      const reader = selectedReaders.sports;
+      if (typeof selectionReader?.buildExpression !== 'function'
+        || typeof selectionReader?.normalize !== 'function'
+        || typeof reader?.buildExpression !== 'function'
+        || typeof reader?.normalize !== 'function') {
+        throw new TypeError('Browser reader is invalid');
+      }
+      const selectionExpression = selectionReader.buildExpression(options);
+      const expression = reader.buildExpression(options);
+      return await queue.run(async ({ signal }) => {
+        const selectionPayload = await sportsGateway.evaluate(
+          selectionExpression,
+          { signal },
+        );
+        const selection = selectionReader.normalize(selectionPayload, options);
+        if (selection.empty) return { events: [], count: 0, truncated: false };
+        const value = await sportsGateway.evaluate(expression, { signal });
+        return reader.normalize(value, options);
+      });
+    } catch (error) {
+      throw trustedError(error);
+    }
+  }
+
   return Object.freeze({
-    getSports: (options = {}) => perform(
-      sportsGateway,
-      selectedReaders.sports,
-      options,
-    ),
+    getSports,
     getSportsAccount: () => perform(sportsGateway, selectedReaders.sportsAccount),
     getBalance: () => perform(accountGateway, selectedReaders.balance),
     getBets: (options = {}) => perform(betsGateway, selectedReaders.bets, options),
