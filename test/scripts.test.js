@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
+const { EventEmitter } = require('node:events');
 
 const projectRoot = path.join(__dirname, '..');
 
@@ -109,25 +110,126 @@ test('smokeTest rejects a protected-route authentication failure', async () => {
   );
 });
 
-test('operations docs describe the secure current-Chrome setup and CDP fallback', () => {
-  const readme = projectFile('README.md');
-  const sportsDocs = projectFile('docs/im-sports-upstream.md');
-  const launchAgent = projectFile('deploy/com.nbmrjun.k8-api.plist');
+class FakeWebSocket extends EventEmitter {
+  static instances = [];
 
-  assert.match(readme, /BROWSER_TRANSPORT=apple_events/);
-  assert.match(readme, /Allow JavaScript from Apple Events/);
-  assert.match(readme, /Automation.*Google Chrome/s);
-  assert.match(readme, /127\.0\.0\.1:8788/);
-  assert.match(readme, /BROWSER_TRANSPORT=cdp/);
-  assert.match(sportsDocs, /location\.origin/);
-  assert.match(sportsDocs, /must not.*full.*URL/is);
-  assert.match(launchAgent, /<key>BROWSER_TRANSPORT<\/key>\s*<string>apple_events<\/string>/);
+  constructor(url) {
+    super();
+    this.url = url;
+    this.readyState = 0;
+    FakeWebSocket.instances.push(this);
+    queueMicrotask(() => {
+      this.readyState = 1;
+      this.emit('open');
+    });
+  }
+
+  close() {
+    if (this.readyState === 3) return;
+    this.readyState = 3;
+    this.emit('close', 1000);
+  }
+
+  message(value) {
+    this.emit('message', Buffer.from(JSON.stringify(value)));
+  }
+}
+
+function controlledTimeout() {
+  let callback;
+  return {
+    setTimeoutImpl(value) { callback = value; return 1; },
+    clearTimeoutImpl() {},
+    fire() { callback(); },
+  };
+}
+
+test('wsSmokeTest requires WS_TOKEN before constructing a connection', async () => {
+  const { wsSmokeTest } = await importScript('ws-smoke-test.mjs');
+  FakeWebSocket.instances.length = 0;
+
+  await assert.rejects(wsSmokeTest({
+    baseUrl: 'ws://127.0.0.1:8788',
+    token: '',
+    WebSocketImpl: FakeWebSocket,
+  }), /WS_TOKEN is required/);
+  assert.equal(FakeWebSocket.instances.length, 0);
+});
+
+test('wsSmokeTest accepts the agreed message types and reports only aggregate counts', async () => {
+  const { wsSmokeTest } = await importScript('ws-smoke-test.mjs');
+  const timeout = controlledTimeout();
+  const token = 'private-websocket-token-that-must-not-be-returned';
+  FakeWebSocket.instances.length = 0;
+  const pending = wsSmokeTest({
+    baseUrl: 'https://k8.example.test/base?old=private',
+    token,
+    WebSocketImpl: FakeWebSocket,
+    ...timeout,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  const [socket] = FakeWebSocket.instances;
+
+  assert.equal(socket.url.startsWith('wss://k8.example.test/ws/sports?token='), true);
+  socket.message({ type: 'snapshot', events: [], seq: 10 });
+  socket.message({
+    type: 'delta', event_id: '1', selection_key: '1', decimal_odds: '1.9',
+    line: null, available: true, seq: 11,
+  });
+  socket.message({ type: 'score', event_id: '1', score: '1-0', clock: '20:00', seq: 12 });
+  socket.message({ type: 'ping', seq: 13 });
+  timeout.fire();
+
+  const result = await pending;
+  assert.deepEqual(result, {
+    status: 'ok',
+    messages: 4,
+    types: { snapshot: 1, delta: 1, score: 1, ping: 1 },
+    monotonic_seq: true,
+  });
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes(token), false);
+  assert.equal(serialized.includes('k8.example.test'), false);
+});
+
+test('wsSmokeTest rejects unknown message types and non-monotonic sequences', async () => {
+  const { wsSmokeTest } = await importScript('ws-smoke-test.mjs');
+  for (const messages of [
+    [{ type: 'private', seq: 1 }],
+    [{ type: 'snapshot', events: [], seq: 5 }, { type: 'ping', seq: 5 }],
+    [{ type: 'delta', seq: 1 }],
+  ]) {
+    const timeout = controlledTimeout();
+    FakeWebSocket.instances.length = 0;
+    const pending = wsSmokeTest({
+      baseUrl: 'ws://127.0.0.1:8788',
+      token: 'long-enough-test-websocket-token-value',
+      WebSocketImpl: FakeWebSocket,
+      ...timeout,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    const [socket] = FakeWebSocket.instances;
+    for (const message of messages) socket.message(message);
+    await assert.rejects(pending, /WebSocket feed validation failed/);
+  }
+});
+
+test('operations docs describe the dedicated Chrome realtime data path', () => {
+  const operations = projectFile('docs/operations.md');
+
+  assert.match(operations, /Cloudflare.*127\.0\.0\.1:8788.*127\.0\.0\.1:9223.*专用 Chrome/s);
+  assert.match(operations, /wss:\/\/k8\.nbmrjun\.top\/ws\/sports\?token=<WS_TOKEN>/);
+  assert.match(operations, /不得.*9223.*Cloudflare/s);
+  assert.match(operations, /隧道配置.*无需修改/s);
+  assert.match(operations, /只读/s);
 });
 
 test('package exposes native syntax checks for production JavaScript and JXA', () => {
   const packageJson = JSON.parse(projectFile('package.json'));
 
   assert.match(packageJson.scripts.check, /node --check src\/server\.js/);
+  assert.match(packageJson.scripts.check, /node --check src\/realtime\/ws-feed-server\.js/);
+  assert.equal(packageJson.scripts['smoke:ws'], 'node --env-file=.env.local scripts/ws-smoke-test.mjs');
   assert.match(packageJson.scripts.check, /node --check src\/browser\/apple-events-gateway\.js/);
   assert.match(
     packageJson.scripts.check,
