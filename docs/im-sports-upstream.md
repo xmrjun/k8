@@ -20,6 +20,17 @@ The 2026-07-19 read-only inspection established these selectors:
 
 The reader extracts only the primary team-bearing row and the first verified full-time 1X2, handicap, and total groups. It reads at most 500 events and returns ordinary JSON fields. It does not click, navigate, place bets, issue page requests, inspect request headers, or access browser storage.
 
+## Verified account-summary structure
+
+The 2026-07-19 read-only inspection also established the IM Sports account panel contract:
+
+- unique account container: `#left_panel .leftmenu_account`
+- currency heading: `.leftmenu_account_title`
+- bounded account rows: `.leftmenu_content .row`
+- row value: `.text-right`
+
+The reader identifies rows by the exact visible labels `余额` and `未结算注单`; it does not depend on row position. It inspects at most eight account rows and returns only the currency heading, available balance, and unsettled amount. Real account amounts are never stored in fixtures or documentation.
+
 ## Current Chrome transport
 
 The default `apple_events` transport uses a repository-owned JXA helper. For each Chrome tab, the helper executes only `location.origin` and compares the result with the configured pure HTTPS origin. It must not request the Chrome tab's full URL property: the full venue URL may contain browser-managed query data and must not appear in process output, configuration, logs, tests, or API responses.
