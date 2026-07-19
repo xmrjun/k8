@@ -1,78 +1,215 @@
-# k81128 Read-Only API
+# K8 IM Sports Read-Only Gateway
 
-受 Bearer Token 保护的本机只读 HTTP API。第一版目标接口：
+K8 把 Mac 上已经登录的专用 Chrome 转换为受令牌保护的 HTTP 与 WebSocket 服务，让远程服务器能够读取 IM 体育赛事、赔率、盘口、比分和账户摘要。
 
-- `GET /health`
-- `GET /api/sports`
-- `GET /api/sports/account`
-- `GET /api/balance`
-- `GET /api/bets?limit=25&cursor=...`
+项目当前严格只读：不读取或导出浏览器登录凭证，不下注，也不执行兑现、确认或资金操作。
 
-服务默认只监听 `127.0.0.1:8788`。除 `/health` 外，所有接口都要求 `Authorization: Bearer <API_TOKEN>`。
+## 架构
 
-## 当前状态
+```text
+远程服务器
+  -> Cloudflare Tunnel / HTTPS
+  -> 127.0.0.1:8788  K8 API
+  -> 127.0.0.1:9223  Chrome DevTools（仅限本机）
+  -> K8 专用 Chrome（用户自行登录）
+```
 
-HTTP 路由、鉴权、响应格式、缓存、分页校验、浏览器错误映射和只读页面 reader 均已完成。默认的 `BROWSER_TRANSPORT=apple_events` 直接使用 Mac 上当前运行且已经登录的 Google Chrome；不需要复制网页凭证，也不会读取 Cookie、Local Storage、Session Storage、密码、完整页面 URL、URL token、请求头或请求签名。
+Cloudflare 只转发 `127.0.0.1:8788`。Chrome 调试端口 `9223` 必须始终绑定回环地址，不能暴露到公网、局域网或隧道。
 
-IM Sports 页面 reader 和限制见 [docs/im-sports-upstream.md](docs/im-sports-upstream.md)，账户页面限制见 [docs/k81128-upstream.md](docs/k81128-upstream.md)。
+## 当前功能
 
-`GET /api/sports/account` 每次实时读取 IM Sports 页面左侧账户面板，不缓存，返回 `currency`、`available_balance` 和 `unsettled_amount`。它与读取 k81128 主账户钱包的 `/api/balance` 相互独立。
+| 接口 | 状态 | 说明 |
+| --- | --- | --- |
+| `GET /health` | 可用 | 无需鉴权的进程健康检查 |
+| `GET /api/sports` | 可用 | 赛事、市场和赔率的只读快照 |
+| `GET /api/sports/account` | 可用 | IM 体育余额与未结算金额，不缓存 |
+| `GET /api/balance` | 可用 | 主账户钱包；要求对应账户页面保持登录 |
+| `WS /ws/sports` | 可用 | IM 体育实时快照、赔率增量、比分和心跳 |
+| `GET /api/bets` | 改造中 | 正在从错误的主账户记录页改接 IM 体育注单弹窗，当前不建议接入生产 |
 
-## 本地运行
+实时推送目前只发布经过验证的足球数据；混合快照中的未验证体育类型会被忽略，不会猜测字段含义。
 
-要求 macOS、Node.js 22 或更高版本，以及当前已经登录的 Chrome：
+## 环境要求
 
-1. 保持 `https://k81128.com` 与配置的 IM Sports origin 两个标签页打开。
-2. 在屏幕顶部 Chrome 菜单选择 **View > Developer > Allow JavaScript from Apple Events**。
-3. 不要把 IM Sports 的完整网址或查询 token 放入任何配置文件。
+- macOS
+- Node.js 22 或更高版本
+- Google Chrome
+- 一个独立、持久化的 K8 Chrome 配置目录
+- 可选：Cloudflare Tunnel，用于让自己的服务器访问本机 API
+
+## 安装
 
 ```bash
-npm test
-npm run check
-npm run generate-token
+git clone git@github.com:xmrjun/k8.git
+cd k8
+npm ci
+cp .env.example .env.local
+```
+
+在 `.env.local` 中设置两个不同且至少 32 个字符的随机令牌：
+
+```dotenv
+API_TOKEN=<HTTP 接口专用随机令牌>
+WS_TOKEN=<WebSocket 专用随机令牌，必须与 API_TOKEN 不同>
+```
+
+不要提交 `.env.local`，也不要把真实令牌粘贴到文档、聊天、截图或 shell 历史中。
+
+推荐的浏览器配置为：
+
+```dotenv
+HOST=127.0.0.1
+PORT=8788
+UPSTREAM_MODE=browser
+BROWSER_TRANSPORT=cdp
+BROWSER_CDP_URL=http://127.0.0.1:9223
+BROWSER_PAGE_ORIGIN=https://k81128.com
+BROWSER_SPORTS_ORIGIN=https://imsb-fxnag.utoyen.com:2053
+BROWSER_OPERATION_TIMEOUT_MS=15000
+```
+
+`BROWSER_SPORTS_ORIGIN` 只能填写纯 HTTPS origin。不要添加体育页面路径、查询参数或登录 token。
+
+## 启动
+
+先启动专用 Chrome，再启动 API。Chrome 示例：
+
+```bash
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --remote-debugging-address=127.0.0.1 \
+  --remote-debugging-port=9223 \
+  --user-data-dir="/path/to/k8-chrome-profile" \
+  --no-first-run \
+  --no-default-browser-check
+```
+
+在这个 Chrome 中自行登录账户并保持 IM 体育页面打开。随后在项目目录运行：
+
+```bash
 npm start
 ```
 
-`npm run generate-token` 创建权限为 `0600` 的 `.env.local`，如果文件已存在则拒绝覆盖，也不会打印 token。传输层默认值等同于：
+服务默认监听：
 
-```dotenv
-BROWSER_TRANSPORT=apple_events
+```text
+http://127.0.0.1:8788
 ```
 
-第一次调用时，macOS 可能显示 Terminal 或 Node 的 **Automation** 权限提示，询问是否允许控制 **Google Chrome**；需要选择允许。若之前拒绝，可到 **System Settings > Privacy & Security > Automation** 重新开启。
+本机已有桌面快捷方式的部署，可直接按以下顺序操作：
 
-另一个终端运行：
+1. 双击“启动 K8 专用 Chrome”。
+2. 确认专用 Chrome 中的账户和 IM 体育页面已登录。
+3. 双击“启动 K8 API”。
+4. 保持 Cloudflare Tunnel 运行。
+
+详细运行与故障处理见 [docs/operations.md](docs/operations.md)。
+
+## HTTP API
+
+除 `/health` 外，HTTP 请求都需要：
+
+```text
+Authorization: Bearer <API_TOKEN>
+```
+
+健康检查：
 
 ```bash
-npm run smoke
+curl http://127.0.0.1:8788/health
 ```
 
-成功接通浏览器时，`protected_status` 应为 `200`：
+读取滚球足球：
+
+```bash
+curl \
+  -H "Authorization: Bearer $API_TOKEN" \
+  "http://127.0.0.1:8788/api/sports?scope=live&sport=football"
+```
+
+`/api/sports` 支持：
+
+- `scope=all|live|today|early`
+- 可选 `sport=football` 等已验证类型
+
+读取 IM 体育账户摘要：
+
+```bash
+curl \
+  -H "Authorization: Bearer $API_TOKEN" \
+  "http://127.0.0.1:8788/api/sports/account"
+```
+
+成功响应统一包含 `data`、`source`、`fetchedAt` 和 `requestId`。`401` 表示 API 令牌无效，`503` 通常表示专用 Chrome 或目标页面不可用，`502` 表示登录失效或页面结构发生变化。
+
+### 注单接口状态
+
+`GET /api/bets` 目前仍保留旧实现，但该实现读取的不是 IM 体育注单弹窗。请暂时不要让生产服务器依赖它。
+
+已确认的新接口设计为：
+
+```text
+GET /api/bets?status=unsettled|settled|all&limit=25&cursor=0
+```
+
+实现计划见 [IM Sports Bet Records Implementation Plan](docs/plans/2026-07-19-im-sports-bets-implementation.md)。
+
+## 实时 WebSocket
+
+公网连接形式：
+
+```text
+wss://<你的 API 域名>/ws/sports?token=<WS_TOKEN>
+```
+
+首帧一定是完整快照，之后只推送变化：
 
 ```json
-{"health":"ok","protected_status":200}
+{"type":"snapshot","events":[],"seq":1}
+{"type":"delta","event_id":"...","selection_key":"...","decimal_odds":2.1,"line":null,"available":true,"seq":2}
+{"type":"score","event_id":"...","score":"1-0","clock":"52:10","seq":3}
+{"type":"ping","seq":4}
 ```
 
-`503` 表示 Chrome、目标标签页或 Automation 权限不可用；`502` 表示登录状态或页面结构需要检查。所有错误响应均经过脱敏。
+- `snapshot`：连接时的当前完整滚球快照
+- `delta`：赔率、盘口线或可用性变化
+- `score`：比分或比赛时钟变化
+- `ping`：每 30 秒发送的应用心跳
+- `seq`：连接内严格递增的序号，可用于检测丢包或乱序
 
-### CDP 兼容回退
+服务器端应在连接断开、收到 `1012` 或长时间未收到消息时重新连接，并用下一次 `snapshot` 覆盖旧状态。
 
-如果以后使用独立 Chrome 调试实例，可显式设置：
+## 验证
 
-```dotenv
-BROWSER_TRANSPORT=cdp
-BROWSER_CDP_URL=http://127.0.0.1:9223
+```bash
+npm run check
+npm test
+npm run smoke
+npm run smoke:ws
 ```
 
-CDP 端口只能监听回环地址，绝不能暴露到局域网、服务器或 Cloudflare Tunnel。
+公网冒烟测试只需要修改不含凭证的目标地址；令牌仍从 `.env.local` 读取：
 
-## launchd 模板
+```bash
+K8_API_BASE_URL=https://<你的 API 域名> npm run smoke
+K8_WS_BASE_URL=wss://<你的 API 域名> npm run smoke:ws
+```
 
-`deploy/com.nbmrjun.k8-api.plist` 明确使用 Apple Events 传输，并使用当前项目绝对路径和 `/opt/homebrew/bin/node`。安装前应先检查路径，再复制到 `~/Library/LaunchAgents/`。launchd 进程也必须获得控制 Google Chrome 的 Automation 权限。本阶段没有自动安装或启动 launchd 服务。
+冒烟程序只输出状态和消息计数，不输出真实赛事、赔率、余额或令牌。
 
-## 安全约束
+## 安全边界
 
-- 不提交 `.env.local`、真实 token 或网页登录凭证。
-- 不从浏览器 Cookie、Local Storage 或 Session Storage 抽取凭证。
-- 日志不记录 Authorization、网页 token 或完整账户响应。
-- 只把 `127.0.0.1:8788` 交给受 Bearer Token 保护的隧道；永不暴露浏览器控制端口。
+- API 不读取 Cookie、Local Storage、Session Storage、密码、请求头或请求签名。
+- API 不记录完整体育页面 URL、查询 token、Authorization 或 WebSocket 查询字符串。
+- HTTP 与 WebSocket 使用不同的高强度令牌。
+- 浏览器调试端口只允许 `127.0.0.1` 或 `::1`。
+- Cloudflare Tunnel 只连接 API 端口，不连接 Chrome 调试端口。
+- 第一版不提供下注、兑现、确认或资金操作。
+- 自动化测试只使用合成数据，不保存真实账户记录。
+
+## 文档
+
+- [IM 体育页面契约](docs/im-sports-upstream.md)
+- [主账户页面契约](docs/k81128-upstream.md)
+- [部署与故障处理](docs/operations.md)
+- [实时行情设计](docs/plans/2026-07-19-im-sports-realtime-feed-design.md)
+- [IM 注单弹窗设计](docs/plans/2026-07-19-im-sports-bets-design.md)
