@@ -123,3 +123,79 @@ test('oversized CDP messages are rejected before parsing', async () => {
   assert.equal(client.closed, true);
 });
 
+test('CDP event subscriptions receive matching events until unsubscribed', async () => {
+  const { client, sockets } = createHarness();
+  const received = [];
+  const unsubscribe = client.subscribe('Network.loadingFinished', (params) => {
+    received.push(params.requestId);
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  sockets[0].message({
+    method: 'Network.loadingFinished',
+    params: { requestId: 'request-1' },
+  });
+  sockets[0].message({
+    method: 'Network.responseReceived',
+    params: { requestId: 'ignored' },
+  });
+  unsubscribe();
+  unsubscribe();
+  sockets[0].message({
+    method: 'Network.loadingFinished',
+    params: { requestId: 'request-2' },
+  });
+
+  assert.deepEqual(received, ['request-1']);
+});
+
+test('CDP events cannot resolve pending commands', async () => {
+  const { client, sockets } = createHarness();
+  const request = client.call('Network.enable');
+  await new Promise((resolve) => setImmediate(resolve));
+  const [command] = sockets[0].sent;
+
+  sockets[0].message({
+    method: 'Network.loadingFinished',
+    params: { id: command.id, result: { forged: true } },
+  });
+  sockets[0].message({ id: command.id, result: { enabled: true } });
+
+  assert.deepEqual(await request, { enabled: true });
+});
+
+test('CDP event listener failures are isolated', async () => {
+  const { client, sockets } = createHarness();
+  const received = [];
+  client.subscribe('Network.loadingFinished', () => {
+    throw new Error('private listener detail');
+  });
+  client.subscribe('Network.loadingFinished', (params) => {
+    received.push(params.requestId);
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  sockets[0].message({
+    method: 'Network.loadingFinished',
+    params: { requestId: 'request-1' },
+  });
+
+  assert.deepEqual(received, ['request-1']);
+  assert.equal(client.closed, false);
+});
+
+test('CDP disconnect listeners run once and event listeners are cleared', async () => {
+  const { client, sockets } = createHarness();
+  let disconnected = 0;
+  let events = 0;
+  client.onDisconnect(() => { disconnected += 1; });
+  client.subscribe('Network.loadingFinished', () => { events += 1; });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  client.close();
+  sockets[0].emit('close', {});
+  sockets[0].message({ method: 'Network.loadingFinished', params: {} });
+
+  assert.equal(disconnected, 1);
+  assert.equal(events, 0);
+});

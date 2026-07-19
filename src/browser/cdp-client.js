@@ -37,6 +37,8 @@ function createCdpClient({
   let nextId = 1;
   let closed = false;
   const pending = new Map();
+  const subscriptions = new Map();
+  const disconnectListeners = new Set();
   let resolveOpen;
   let rejectOpen;
   const opened = new Promise((resolve, reject) => {
@@ -57,6 +59,12 @@ function createCdpClient({
     closed = true;
     rejectOpen(error);
     rejectPending(error);
+    subscriptions.clear();
+    const listeners = [...disconnectListeners];
+    disconnectListeners.clear();
+    for (const listener of listeners) {
+      try { listener(); } catch { /* ignored */ }
+    }
   }
 
   socket.addEventListener('open', () => resolveOpen(), { once: true });
@@ -67,6 +75,7 @@ function createCdpClient({
     fail(upstreamError(CODES.BROWSER_UNAVAILABLE, 'Browser connection closed'));
   });
   socket.addEventListener('message', (event) => {
+    if (closed) return;
     if (byteLength(event.data) > maxMessageBytes) {
       fail(upstreamError(CODES.BAD_RESPONSE, 'CDP response was too large'));
       try { socket.close(); } catch { /* ignored */ }
@@ -82,7 +91,13 @@ function createCdpClient({
       return;
     }
 
-    if (!Number.isInteger(frame?.id)) return;
+    if (!Number.isInteger(frame?.id)) {
+      if (typeof frame?.method !== 'string') return;
+      for (const listener of [...(subscriptions.get(frame.method) || [])]) {
+        try { listener(frame.params || {}); } catch { /* ignored */ }
+      }
+      return;
+    }
     const entry = pending.get(frame.id);
     if (!entry) return;
     pending.delete(frame.id);
@@ -93,6 +108,40 @@ function createCdpClient({
     }
     entry.resolve(frame.result);
   });
+
+  function subscribe(method, listener) {
+    if (typeof method !== 'string' || method.length === 0 || typeof listener !== 'function') {
+      throw new TypeError('CDP event method and listener are required');
+    }
+    if (closed) return () => {};
+    const listeners = subscriptions.get(method) || new Set();
+    listeners.add(listener);
+    subscriptions.set(method, listeners);
+    let active = true;
+    return () => {
+      if (!active) return;
+      active = false;
+      listeners.delete(listener);
+      if (listeners.size === 0) subscriptions.delete(method);
+    };
+  }
+
+  function onDisconnect(listener) {
+    if (typeof listener !== 'function') {
+      throw new TypeError('CDP disconnect listener is required');
+    }
+    if (closed) {
+      try { listener(); } catch { /* ignored */ }
+      return () => {};
+    }
+    disconnectListeners.add(listener);
+    let active = true;
+    return () => {
+      if (!active) return;
+      active = false;
+      disconnectListeners.delete(listener);
+    };
+  }
 
   async function call(method, params = {}, { signal } = {}) {
     if (closed) {
@@ -147,6 +196,8 @@ function createCdpClient({
 
   return Object.freeze({
     call,
+    subscribe,
+    onDisconnect,
     close,
     get closed() {
       return closed;
@@ -155,4 +206,3 @@ function createCdpClient({
 }
 
 module.exports = { createCdpClient };
-
