@@ -60,6 +60,7 @@ function createFeedState({ now = Date.now, staleMs = 15_000 } = {}) {
   }
 
   let rawEvents = new Map();
+  let ignoredEventIds = new Set();
   let events = [];
   let ready = false;
   let resyncRequired = false;
@@ -141,10 +142,12 @@ function createFeedState({ now = Date.now, staleMs = 15_000 } = {}) {
     for (const [eventId, rawEvent] of normalized.upstream.events) {
       candidateRaw.set(eventId, clone(rawEvent));
     }
+    const candidateIgnored = new Set(normalized.upstream.ignoredEventIds);
     const candidateEvents = clone(normalized.events);
     const messages = ready ? diff(events, candidateEvents) : [];
     if (!ready) nextSequence();
     rawEvents = candidateRaw;
+    ignoredEventIds = candidateIgnored;
     events = candidateEvents;
     ready = true;
     resyncRequired = false;
@@ -225,6 +228,7 @@ function createFeedState({ now = Date.now, staleMs = 15_000 } = {}) {
         const eventId = typeof entry.eid === 'number' && Number.isSafeInteger(entry.eid)
           ? String(entry.eid)
           : entry.eid;
+        if (ignoredEventIds.has(eventId)) continue;
         const rawEvent = candidateRaw.get(eventId);
         if (!rawEvent) throw new Error('schema');
 
@@ -275,6 +279,7 @@ function createFeedState({ now = Date.now, staleMs = 15_000 } = {}) {
     ready = false;
     resyncRequired = true;
     rawEvents = new Map();
+    ignoredEventIds = new Set();
     events = [];
   }
 

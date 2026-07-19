@@ -184,12 +184,22 @@ function normalizeSnapshot(input) {
   const decoded = decodeImResponse(input);
   if (decoded.type !== 'snapshot' || decoded.value.sel.length > MAX_EVENTS) throw schemaError();
 
-  const eventIds = new Set();
+  const allEventIds = new Set();
+  const ignoredEventIds = new Set();
+  const supportedEvents = [];
+  for (const rawEvent of decoded.value.sel) {
+    if (!record(rawEvent)) throw schemaError();
+    const eventId = id(rawEvent.eid);
+    if (allEventIds.has(eventId)) throw schemaError();
+    allEventIds.add(eventId);
+    if (rawEvent.m === 3) supportedEvents.push(rawEvent);
+    else ignoredEventIds.add(eventId);
+  }
+  if (supportedEvents.length === 0 && decoded.value.sel.length > 0) throw schemaError();
+
   const upstreamEvents = new Map();
-  const events = decoded.value.sel.map((rawEvent) => {
+  const events = supportedEvents.map((rawEvent) => {
     const normalized = normalizeEvent(rawEvent);
-    if (eventIds.has(normalized.event_id)) throw schemaError();
-    eventIds.add(normalized.event_id);
     const raw = structuredClone(rawEvent);
     upstreamEvents.set(normalized.event_id, raw);
     return normalized;
@@ -200,7 +210,7 @@ function normalizeSnapshot(input) {
     enumerable: false,
     configurable: false,
     writable: false,
-    value: Object.freeze({ events: upstreamEvents }),
+    value: Object.freeze({ events: upstreamEvents, ignoredEventIds }),
   });
   return result;
 }

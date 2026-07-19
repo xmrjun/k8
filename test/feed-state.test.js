@@ -186,3 +186,27 @@ test('disconnect invalidation makes the feed unavailable until a new snapshot', 
   assert.equal(feed.isStale(), true);
   assert.equal(feed.snapshot(), null);
 });
+
+test('deltas for unsupported events from a mixed snapshot are ignored safely', () => {
+  const payload = snapshotFixture();
+  payload.sel.push({
+    eid: 900000002,
+    m: 2,
+    cn: 'Unsupported Example League',
+    htn: 'Unsupported Home',
+    atn: 'Unsupported Away',
+    mls: [],
+  });
+  const feed = createFeedState();
+  assert.equal(feed.ingest(payload).needsResync, false);
+
+  const before = feed.snapshot();
+  const result = feed.ingest({
+    StatusCode: 100,
+    dc: [{ a: 99, eid: 900000002, sid: 0, v: 'unsupported-private-shape' }],
+  });
+
+  assert.deepEqual(result, { messages: [], needsResync: false });
+  assert.deepEqual(feed.snapshot(), before);
+  assert.equal(feed.isStale(), false);
+});

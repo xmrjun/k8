@@ -233,3 +233,22 @@ test('normalized public snapshots are detached from upstream input', () => {
   assert.equal(result.events[0].home, 'Example Home');
   assert.equal(JSON.stringify(result).includes('upstream'), false);
 });
+
+test('mixed snapshots publish verified football and remember unsupported event ids', () => {
+  const payload = fixture();
+  payload.sel.push({
+    eid: 900000002,
+    m: 2,
+    cn: 'Unsupported Example League',
+    htn: 'Unsupported Home',
+    atn: 'Unsupported Away',
+    mls: [],
+  });
+
+  const result = normalizeSnapshot(payload);
+
+  assert.equal(result.count, 1);
+  assert.deepEqual(result.events.map((event) => event.event_id), ['900000001']);
+  assert.deepEqual([...result.upstream.ignoredEventIds], ['900000002']);
+  assert.equal(JSON.stringify(result).includes('900000002'), false);
+});
