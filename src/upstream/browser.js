@@ -27,7 +27,10 @@ const balanceReader = Object.freeze({
 });
 
 const betsReader = Object.freeze({
-  buildExpression: () => buildBetsExpression({ maxRows: 200 }),
+  buildExpression: (options = {}) => buildBetsExpression({
+    status: options.status,
+    maxRows: 200,
+  }),
   normalize: normalizeBetsPayload,
 });
 
@@ -39,11 +42,13 @@ function trustedError(error) {
 function createBrowserUpstream({
   sportsGateway,
   accountGateway,
+  betsGateway,
   queue,
   readers = {},
 }) {
   if (!sportsGateway?.evaluate || !sportsGateway?.close
     || !accountGateway?.evaluate || !accountGateway?.close
+    || !betsGateway?.evaluate || !betsGateway?.close
     || !queue?.run) {
     throw new TypeError('Browser gateways and operation queue are required');
   }
@@ -78,12 +83,13 @@ function createBrowserUpstream({
     ),
     getSportsAccount: () => perform(sportsGateway, selectedReaders.sportsAccount),
     getBalance: () => perform(accountGateway, selectedReaders.balance),
-    getBets: (options = {}) => perform(accountGateway, selectedReaders.bets, options),
+    getBets: (options = {}) => perform(betsGateway, selectedReaders.bets, options),
     close() {
       if (!closePromise) {
         closePromise = (async () => {
-          await sportsGateway.close();
-          await accountGateway.close();
+          for (const gateway of new Set([sportsGateway, accountGateway, betsGateway])) {
+            await gateway.close();
+          }
         })();
       }
       return closePromise;

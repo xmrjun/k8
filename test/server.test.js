@@ -88,14 +88,15 @@ test('CDP browser transport creates exact-origin gateways that share one queue',
   assert.equal(typeof upstream.getSports, 'function');
   assert.equal(typeof upstream.getSportsAccount, 'function');
   assert.deepEqual(gateways, [
-    { cdpUrl: 'http://127.0.0.1:9223', pageOrigin: 'https://sports.example.test:2053' },
-    { cdpUrl: 'http://127.0.0.1:9223', pageOrigin: 'https://k81128.com' },
+    { cdpUrl: 'http://127.0.0.1:9223', pageOrigin: 'https://sports.example.test:2053', pagePathname: '/' },
+    { cdpUrl: 'http://127.0.0.1:9223', pageOrigin: 'https://k81128.com', pagePathname: '/' },
+    { cdpUrl: 'http://127.0.0.1:9223', pageOrigin: 'https://sports.example.test:2053', pagePathname: '/popup/' },
   ]);
   assert.equal(queues.length, 1);
   assert.deepEqual(queues[0].options, { timeoutMs: 1234 });
 });
 
-test('Apple Events browser transport creates dual exact-origin gateways with no CDP URL', () => {
+test('Apple Events browser transport creates exact-purpose gateways with no CDP URL', () => {
   const appleGateways = [];
   const cdpGateways = [];
   const queues = [];
@@ -128,8 +129,9 @@ test('Apple Events browser transport creates dual exact-origin gateways with no 
   assert.equal(typeof upstream.getBalance, 'function');
   assert.equal(typeof upstream.getSportsAccount, 'function');
   assert.deepEqual(appleGateways, [
-    { pageOrigin: 'https://sports.example.test:2053' },
-    { pageOrigin: 'https://k81128.com' },
+    { pageOrigin: 'https://sports.example.test:2053', pagePathname: '/' },
+    { pageOrigin: 'https://k81128.com', pagePathname: '/' },
+    { pageOrigin: 'https://sports.example.test:2053', pagePathname: '/popup/' },
   ]);
   assert.deepEqual(cdpGateways, []);
   assert.equal(queues.length, 1);

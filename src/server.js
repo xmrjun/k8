@@ -48,12 +48,19 @@ function createConfiguredUpstream(config, {
   const sportsGateway = gatewayFactory({
     ...sharedOptions,
     pageOrigin: config.browserSportsOrigin,
+    pagePathname: '/',
   });
   const accountGateway = gatewayFactory({
     ...sharedOptions,
     pageOrigin: config.browserPageOrigin,
+    pagePathname: '/',
   });
-  return createBrowserUpstream({ sportsGateway, accountGateway, queue });
+  const betsGateway = gatewayFactory({
+    ...sharedOptions,
+    pageOrigin: config.browserSportsOrigin,
+    pagePathname: '/popup/',
+  });
+  return createBrowserUpstream({ sportsGateway, accountGateway, betsGateway, queue });
 }
 
 function rejectUpgrade(socket, status, reason) {

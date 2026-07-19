@@ -33,6 +33,7 @@ test('sports reads use only the sports gateway and preserve query options', asyn
   const upstream = createBrowserUpstream({
     sportsGateway: gateway('sports', calls),
     accountGateway: gateway('account', calls),
+    betsGateway: gateway('bets', calls),
     queue: createOperationQueue(),
     readers: {
       sports: reader('sports-reader'),
@@ -59,6 +60,7 @@ test('sports account reads use only the sports gateway', async () => {
   const upstream = createBrowserUpstream({
     sportsGateway: gateway('sports', calls),
     accountGateway: gateway('account', calls),
+    betsGateway: gateway('bets', calls),
     queue: createOperationQueue(),
     readers: {
       sports: reader('sports-reader'),
@@ -79,11 +81,12 @@ test('sports account reads use only the sports gateway', async () => {
   assert.match(calls[0].expression, /sports-account-reader/);
 });
 
-test('balance and bet reads use only the account gateway', async () => {
+test('balance and bet reads use separate exact-purpose gateways', async () => {
   const calls = [];
   const upstream = createBrowserUpstream({
     sportsGateway: gateway('sports', calls),
     accountGateway: gateway('account', calls),
+    betsGateway: gateway('bets', calls),
     queue: createOperationQueue(),
     readers: {
       sports: reader('sports-reader'),
@@ -96,7 +99,7 @@ test('balance and bet reads use only the account gateway', async () => {
   await upstream.getBalance();
   await upstream.getBets({ limit: 25, cursor: 'next' });
 
-  assert.deepEqual(calls.map((call) => call.name), ['account', 'account']);
+  assert.deepEqual(calls.map((call) => call.name), ['account', 'bets']);
   assert.match(calls[1].expression, /bets-reader/);
 });
 
@@ -116,6 +119,7 @@ test('sports and account browser operations share one serial queue', async () =>
   const upstream = createBrowserUpstream({
     sportsGateway: delayedGateway,
     accountGateway: delayedGateway,
+    betsGateway: delayedGateway,
     queue: createOperationQueue(),
     readers: {
       sports: reader('sports-reader'),
@@ -148,6 +152,7 @@ test('unknown gateway errors are replaced with a sanitized browser error', async
   const upstream = createBrowserUpstream({
     sportsGateway: maliciousGateway,
     accountGateway: maliciousGateway,
+    betsGateway: maliciousGateway,
     queue: createOperationQueue(),
     readers: { sports: reader('sports-reader') },
   });
@@ -174,6 +179,7 @@ test('trusted browser, timeout, auth, and schema errors preserve only stable cod
     const upstream = createBrowserUpstream({
       sportsGateway: failingGateway,
       accountGateway: failingGateway,
+      betsGateway: failingGateway,
       queue: createOperationQueue(),
       readers: { sports: reader('sports-reader') },
     });
@@ -197,6 +203,7 @@ test('sports failure never falls back to the account page', async () => {
       },
       async close() {},
     },
+    betsGateway: gateway('bets', []),
     queue: createOperationQueue(),
     readers: { sports: reader('sports-reader') },
   });
@@ -205,11 +212,12 @@ test('sports failure never falls back to the account page', async () => {
   assert.equal(accountCalls, 0);
 });
 
-test('close releases both browser gateways exactly once', async () => {
+test('close releases all three browser gateways exactly once', async () => {
   const calls = [];
   const upstream = createBrowserUpstream({
     sportsGateway: gateway('sports', calls),
     accountGateway: gateway('account', calls),
+    betsGateway: gateway('bets', calls),
     queue: createOperationQueue(),
     readers: { sports: reader('sports-reader') },
   });
@@ -220,10 +228,11 @@ test('close releases both browser gateways exactly once', async () => {
   assert.deepEqual(calls, [
     { name: 'sports', close: true },
     { name: 'account', close: true },
+    { name: 'bets', close: true },
   ]);
 });
 
-test('default account readers normalize balance and game records on the account gateway', async () => {
+test('default readers normalize balance and IM Sports records on separate gateways', async () => {
   const accountGateway = {
     async evaluate(expression) {
       if (expression.includes('.gameTable')) {
@@ -241,9 +250,20 @@ test('default account readers normalize balance and game records on the account 
     },
     async close() {},
   };
+  const betsGateway = {
+    async evaluate() {
+      return {
+        status: 'ready',
+        currency_label: '投注金额 (USD)',
+        tabs: [{ record_status: 'unsettled', empty: true, rows: [] }],
+      };
+    },
+    async close() {},
+  };
   const upstream = createBrowserUpstream({
     sportsGateway: gateway('sports', []),
     accountGateway,
+    betsGateway,
     queue: createOperationQueue(),
   });
 
@@ -252,5 +272,5 @@ test('default account readers normalize balance and game records on the account 
     total: 1.25,
     wallets: [{ currency: 'USDT', amount: 1.25 }],
   });
-  assert.deepEqual(await upstream.getBets({ limit: 25 }), []);
+  assert.deepEqual(await upstream.getBets({ status: 'unsettled', limit: 25 }), []);
 });
