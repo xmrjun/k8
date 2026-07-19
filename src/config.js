@@ -44,7 +44,7 @@ function upstreamMode() {
 
 function browserTransport() {
   const value = process.env.BROWSER_TRANSPORT === undefined
-    ? 'apple_events'
+    ? 'cdp'
     : process.env.BROWSER_TRANSPORT;
   if (!['apple_events', 'cdp'].includes(value)) {
     throw new Error('BROWSER_TRANSPORT must be apple_events or cdp');
@@ -93,12 +93,22 @@ function httpsOriginSetting(name, fallback) {
 
 function loadConfig() {
   const apiToken = process.env.API_TOKEN;
+  const wsToken = process.env.WS_TOKEN;
 
   if (!apiToken) {
     throw new Error('API_TOKEN is required');
   }
   if (apiToken.length < 32) {
     throw new Error('API_TOKEN must be at least 32 characters');
+  }
+  if (!wsToken) {
+    throw new Error('WS_TOKEN is required');
+  }
+  if (wsToken.length < 32) {
+    throw new Error('WS_TOKEN must be at least 32 characters');
+  }
+  if (wsToken === apiToken) {
+    throw new Error('WS_TOKEN must differ from API_TOKEN');
   }
 
   return {
@@ -110,6 +120,7 @@ function loadConfig() {
       'must be an integer between 1 and 65535',
     ),
     apiToken,
+    wsToken,
     upstreamMode: upstreamMode(),
     upstreamBaseUrl: upstreamBaseUrl(),
     upstreamCredential: process.env.UPSTREAM_CREDENTIAL || '',

@@ -7,12 +7,18 @@ const { loadConfig, publicConfig } = require('../src/config');
 
 function withEnv(overrides, callback) {
   const original = { ...process.env };
+  const values = { ...overrides };
+  if (values.API_TOKEN && !Object.hasOwn(values, 'WS_TOKEN')) {
+    values.WS_TOKEN = 'w'.repeat(32);
+  }
 
   try {
     for (const key of Object.keys(process.env)) {
       delete process.env[key];
     }
-    Object.assign(process.env, overrides);
+    for (const [key, value] of Object.entries(values)) {
+      if (value !== undefined) process.env[key] = value;
+    }
     return callback();
   } finally {
     for (const key of Object.keys(process.env)) {
@@ -34,17 +40,36 @@ test('loadConfig rejects API_TOKEN values shorter than 32 characters', () => {
   });
 });
 
+test('loadConfig requires WS_TOKEN', () => {
+  withEnv({ API_TOKEN: 'a'.repeat(32), WS_TOKEN: undefined }, () => {
+    assert.throws(() => loadConfig(), /WS_TOKEN is required/);
+  });
+});
+
+test('loadConfig rejects WS_TOKEN values shorter than 32 characters', () => {
+  withEnv({ API_TOKEN: 'a'.repeat(32), WS_TOKEN: 'too-short' }, () => {
+    assert.throws(() => loadConfig(), /WS_TOKEN must be at least 32 characters/);
+  });
+});
+
+test('loadConfig rejects WS_TOKEN when it reuses API_TOKEN', () => {
+  withEnv({ API_TOKEN: 'a'.repeat(32), WS_TOKEN: 'a'.repeat(32) }, () => {
+    assert.throws(() => loadConfig(), /WS_TOKEN must differ from API_TOKEN/);
+  });
+});
+
 test('loadConfig defaults to the loopback Chrome browser bridge', () => {
   withEnv({ API_TOKEN: 'a'.repeat(32) }, () => {
     assert.deepEqual(loadConfig(), {
       host: '127.0.0.1',
       port: 8788,
       apiToken: 'a'.repeat(32),
+      wsToken: 'w'.repeat(32),
       upstreamMode: 'browser',
       upstreamBaseUrl: '',
       upstreamCredential: '',
       sportsCacheMs: 5000,
-      browserTransport: 'apple_events',
+      browserTransport: 'cdp',
       browserCdpUrl: 'http://127.0.0.1:9223',
       browserPageOrigin: 'https://k81128.com',
       browserSportsOrigin: 'https://imsb-fxnag.utoyen.com:2053',
@@ -56,6 +81,7 @@ test('loadConfig defaults to the loopback Chrome browser bridge', () => {
 test('loadConfig reads all configuration from process.env', () => {
   withEnv({
     API_TOKEN: 'b'.repeat(32),
+    WS_TOKEN: 'c'.repeat(32),
     HOST: '127.0.0.2',
     PORT: '9000',
     UPSTREAM_BASE_URL: 'https://api.example.test/v1',
@@ -72,6 +98,7 @@ test('loadConfig reads all configuration from process.env', () => {
       host: '127.0.0.2',
       port: 9000,
       apiToken: 'b'.repeat(32),
+      wsToken: 'c'.repeat(32),
       upstreamMode: 'http',
       upstreamBaseUrl: 'https://api.example.test/v1',
       upstreamCredential: 'upstream-secret',
@@ -87,10 +114,12 @@ test('loadConfig reads all configuration from process.env', () => {
 
 test('publicConfig exposes only non-secret diagnostics', () => {
   const apiToken = 'private-api-token-that-is-long-enough';
+  const wsToken = 'private-ws-token-that-is-long-enough';
   const upstreamCredential = 'private-upstream-credential';
 
   withEnv({
     API_TOKEN: apiToken,
+    WS_TOKEN: wsToken,
     UPSTREAM_BASE_URL: 'https://api.example.test/v1/resources',
     UPSTREAM_CREDENTIAL: upstreamCredential,
   }, () => {
@@ -103,14 +132,16 @@ test('publicConfig exposes only non-secret diagnostics', () => {
       upstreamMode: 'browser',
       upstreamOrigin: 'https://api.example.test',
       sportsCacheMs: 5000,
-      browserTransport: 'apple_events',
+      browserTransport: 'cdp',
       browserPageOrigin: 'https://k81128.com',
       browserSportsOrigin: 'https://imsb-fxnag.utoyen.com:2053',
       browserOperationTimeoutMs: 15000,
     });
     assert.equal(serialized.includes(apiToken), false);
+    assert.equal(serialized.includes(wsToken), false);
     assert.equal(serialized.includes(upstreamCredential), false);
     assert.equal(Object.hasOwn(diagnostics, 'apiToken'), false);
+    assert.equal(Object.hasOwn(diagnostics, 'wsToken'), false);
     assert.equal(Object.hasOwn(diagnostics, 'upstreamCredential'), false);
   });
 });
@@ -211,6 +242,14 @@ test('.env.example cannot provide an accepted API token when copied unchanged', 
   const example = fs.readFileSync(path.join(__dirname, '..', '.env.example'), 'utf8');
   const tokenLine = example.split('\n').find((line) => line.startsWith('API_TOKEN='));
   const token = tokenLine.slice('API_TOKEN='.length);
+
+  assert.ok(token.length < 32);
+});
+
+test('.env.example cannot provide an accepted WebSocket token when copied unchanged', () => {
+  const example = fs.readFileSync(path.join(__dirname, '..', '.env.example'), 'utf8');
+  const tokenLine = example.split('\n').find((line) => line.startsWith('WS_TOKEN='));
+  const token = tokenLine.slice('WS_TOKEN='.length);
 
   assert.ok(token.length < 32);
 });
