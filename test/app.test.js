@@ -159,6 +159,7 @@ test('non-GET methods return 405 without calling the upstream', async () => {
 });
 
 for (const [upstreamCode, status, publicCode] of [
+  [CODES.BROWSER_UNAVAILABLE, 503, 'BROWSER_UNAVAILABLE'],
   [CODES.AUTH_EXPIRED, 502, 'UPSTREAM_AUTH_EXPIRED'],
   [CODES.TIMEOUT, 504, 'UPSTREAM_TIMEOUT'],
   [CODES.BAD_RESPONSE, 502, 'UPSTREAM_BAD_RESPONSE'],

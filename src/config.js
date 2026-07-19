@@ -32,6 +32,50 @@ function upstreamBaseUrl() {
   return parsed.href;
 }
 
+function upstreamMode() {
+  const value = process.env.UPSTREAM_MODE === undefined
+    ? 'browser'
+    : process.env.UPSTREAM_MODE;
+  if (!['browser', 'http', 'disabled'].includes(value)) {
+    throw new Error('UPSTREAM_MODE must be browser, http, or disabled');
+  }
+  return value;
+}
+
+function browserCdpUrl() {
+  const rawValue = process.env.BROWSER_CDP_URL || 'http://127.0.0.1:9223';
+  let parsed;
+  try {
+    parsed = new URL(rawValue);
+  } catch {
+    throw new Error('BROWSER_CDP_URL must be an http URL on a loopback IP address');
+  }
+
+  const loopbackHosts = new Set(['127.0.0.1', '::1', '[::1]']);
+  if (parsed.protocol !== 'http:'
+    || !loopbackHosts.has(parsed.hostname)
+    || parsed.username
+    || parsed.password) {
+    throw new Error('BROWSER_CDP_URL must be an http URL on a loopback IP address');
+  }
+  return parsed.origin;
+}
+
+function browserPageOrigin() {
+  const rawValue = process.env.BROWSER_PAGE_ORIGIN || 'https://k81128.com';
+  let parsed;
+  try {
+    parsed = new URL(rawValue);
+  } catch {
+    throw new Error('BROWSER_PAGE_ORIGIN must be a valid https URL');
+  }
+
+  if (parsed.protocol !== 'https:' || parsed.username || parsed.password) {
+    throw new Error('BROWSER_PAGE_ORIGIN must be a valid https URL');
+  }
+  return parsed.origin;
+}
+
 function loadConfig() {
   const apiToken = process.env.API_TOKEN;
 
@@ -51,6 +95,7 @@ function loadConfig() {
       'must be an integer between 1 and 65535',
     ),
     apiToken,
+    upstreamMode: upstreamMode(),
     upstreamBaseUrl: upstreamBaseUrl(),
     upstreamCredential: process.env.UPSTREAM_CREDENTIAL || '',
     sportsCacheMs: integerSetting(
@@ -58,6 +103,14 @@ function loadConfig() {
       5000,
       (value) => value >= 0,
       'must be a non-negative integer',
+    ),
+    browserCdpUrl: browserCdpUrl(),
+    browserPageOrigin: browserPageOrigin(),
+    browserOperationTimeoutMs: integerSetting(
+      'BROWSER_OPERATION_TIMEOUT_MS',
+      15000,
+      (value) => value > 0,
+      'must be a positive integer',
     ),
   };
 }
@@ -68,10 +121,13 @@ function publicConfig() {
   return {
     host: config.host,
     port: config.port,
+    upstreamMode: config.upstreamMode,
     upstreamOrigin: config.upstreamBaseUrl
       ? new URL(config.upstreamBaseUrl).origin
       : '',
     sportsCacheMs: config.sportsCacheMs,
+    browserPageOrigin: config.browserPageOrigin,
+    browserOperationTimeoutMs: config.browserOperationTimeoutMs,
   };
 }
 

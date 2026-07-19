@@ -34,15 +34,19 @@ test('loadConfig rejects API_TOKEN values shorter than 32 characters', () => {
   });
 });
 
-test('loadConfig uses loopback, port 8788, and a five-second cache by default', () => {
+test('loadConfig defaults to the loopback Chrome browser bridge', () => {
   withEnv({ API_TOKEN: 'a'.repeat(32) }, () => {
     assert.deepEqual(loadConfig(), {
       host: '127.0.0.1',
       port: 8788,
       apiToken: 'a'.repeat(32),
+      upstreamMode: 'browser',
       upstreamBaseUrl: '',
       upstreamCredential: '',
       sportsCacheMs: 5000,
+      browserCdpUrl: 'http://127.0.0.1:9223',
+      browserPageOrigin: 'https://k81128.com',
+      browserOperationTimeoutMs: 15000,
     });
   });
 });
@@ -54,15 +58,23 @@ test('loadConfig reads all configuration from process.env', () => {
     PORT: '9000',
     UPSTREAM_BASE_URL: 'https://api.example.test/v1',
     UPSTREAM_CREDENTIAL: 'upstream-secret',
+    UPSTREAM_MODE: 'http',
     SPORTS_CACHE_MS: '2500',
+    BROWSER_CDP_URL: 'http://[::1]:9333',
+    BROWSER_PAGE_ORIGIN: 'https://K81128.com/path-is-ignored',
+    BROWSER_OPERATION_TIMEOUT_MS: '9000',
   }, () => {
     assert.deepEqual(loadConfig(), {
       host: '127.0.0.2',
       port: 9000,
       apiToken: 'b'.repeat(32),
+      upstreamMode: 'http',
       upstreamBaseUrl: 'https://api.example.test/v1',
       upstreamCredential: 'upstream-secret',
       sportsCacheMs: 2500,
+      browserCdpUrl: 'http://[::1]:9333',
+      browserPageOrigin: 'https://k81128.com',
+      browserOperationTimeoutMs: 9000,
     });
   });
 });
@@ -82,8 +94,11 @@ test('publicConfig exposes only non-secret diagnostics', () => {
     assert.deepEqual(diagnostics, {
       host: '127.0.0.1',
       port: 8788,
+      upstreamMode: 'browser',
       upstreamOrigin: 'https://api.example.test',
       sportsCacheMs: 5000,
+      browserPageOrigin: 'https://k81128.com',
+      browserOperationTimeoutMs: 15000,
     });
     assert.equal(serialized.includes(apiToken), false);
     assert.equal(serialized.includes(upstreamCredential), false);
@@ -91,6 +106,59 @@ test('publicConfig exposes only non-secret diagnostics', () => {
     assert.equal(Object.hasOwn(diagnostics, 'upstreamCredential'), false);
   });
 });
+
+for (const upstreamMode of ['unknown', '', 'BROWSER']) {
+  test(`loadConfig rejects invalid UPSTREAM_MODE ${JSON.stringify(upstreamMode)}`, () => {
+    withEnv({ API_TOKEN: 'a'.repeat(32), UPSTREAM_MODE: upstreamMode }, () => {
+      assert.throws(() => loadConfig(), /UPSTREAM_MODE must be browser, http, or disabled/);
+    });
+  });
+}
+
+for (const browserCdpUrl of [
+  'http://0.0.0.0:9223',
+  'http://192.168.1.10:9223',
+  'https://127.0.0.1:9223',
+  'not a URL',
+]) {
+  test(`loadConfig rejects unsafe BROWSER_CDP_URL ${browserCdpUrl}`, () => {
+    withEnv({ API_TOKEN: 'a'.repeat(32), BROWSER_CDP_URL: browserCdpUrl }, () => {
+      assert.throws(
+        () => loadConfig(),
+        /BROWSER_CDP_URL must be an http URL on a loopback IP address/,
+      );
+    });
+  });
+}
+
+for (const browserPageOrigin of [
+  'http://k81128.com',
+  'file:///tmp/k81128',
+  'not a URL',
+]) {
+  test(`loadConfig rejects unsafe BROWSER_PAGE_ORIGIN ${browserPageOrigin}`, () => {
+    withEnv({ API_TOKEN: 'a'.repeat(32), BROWSER_PAGE_ORIGIN: browserPageOrigin }, () => {
+      assert.throws(
+        () => loadConfig(),
+        /BROWSER_PAGE_ORIGIN must be a valid https URL/,
+      );
+    });
+  });
+}
+
+for (const timeoutMs of ['0', '-1', '1.5', 'Infinity', 'not-a-number']) {
+  test(`loadConfig rejects invalid BROWSER_OPERATION_TIMEOUT_MS ${timeoutMs}`, () => {
+    withEnv({
+      API_TOKEN: 'a'.repeat(32),
+      BROWSER_OPERATION_TIMEOUT_MS: timeoutMs,
+    }, () => {
+      assert.throws(
+        () => loadConfig(),
+        /BROWSER_OPERATION_TIMEOUT_MS must be a positive integer/,
+      );
+    });
+  });
+}
 
 test('.env.example cannot provide an accepted API token when copied unchanged', () => {
   const example = fs.readFileSync(path.join(__dirname, '..', '.env.example'), 'utf8');

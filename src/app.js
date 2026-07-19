@@ -35,6 +35,7 @@ function parseBetsQuery(searchParams) {
 
 function sendUpstreamError(response, error, requestId) {
   const mappings = {
+    [CODES.BROWSER_UNAVAILABLE]: [503, CODES.BROWSER_UNAVAILABLE, 'Browser is unavailable'],
     [CODES.AUTH_EXPIRED]: [502, CODES.AUTH_EXPIRED, 'Upstream authentication expired'],
     [CODES.TIMEOUT]: [504, CODES.TIMEOUT, 'Upstream request timed out'],
     [CODES.BAD_RESPONSE]: [502, CODES.BAD_RESPONSE, 'Upstream returned a bad response'],
