@@ -1,471 +1,294 @@
-# k81128 Browser Bridge Implementation Plan
+# k81128 / IM Sports Browser Bridge Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Connect the existing token-protected Node.js API to a dedicated, locally logged-in Chrome instance and return verified read-only sports, wallet, and game-record data without extracting browser credentials.
+**Goal:** Expose complete read-only IM Sports live, today, and early odds through the existing token-protected Node.js API while keeping k81128 account reads separate and never extracting browser credentials.
 
-**Architecture:** A dependency-free CDP gateway connects only to `http://127.0.0.1:9223`, selects an allow-listed `https://k81128.com` page target, and evaluates bounded DOM readers. A single-operation queue serializes browser work. The existing HTTP layer remains the only tunnel-exposed surface; CDP remains loopback-only. User login is manual and credentials, Cookie, Local Storage, Session Storage, and request tokens are never read or returned.
+**Architecture:** A dependency-free CDP gateway connects only to a dedicated Chrome on `127.0.0.1`, with exact-origin gateways for the k81128 account page and the IM Sports venue page. Both gateways share one bounded operation queue. DOM expressions return bounded, plain sports fields; Node validates and normalizes them before query-keyed caching and HTTP serialization.
 
-**Tech Stack:** Node.js 22 built-ins (`http`, `fetch`, `WebSocket`, `crypto`, `node:test`), Chrome DevTools Protocol, launchd, Cloudflare Tunnel.
+**Tech Stack:** Node.js 22 built-ins (`http`, `fetch`, `WebSocket`, `node:test`), Chrome DevTools Protocol, launchd, Cloudflare Tunnel.
+
+**Security rule:** Never read, persist, log, or return Cookie, Local Storage, Session Storage, passwords, request signatures, CDP URLs, or the venue page URL/query token. Configuration contains origins only.
 
 ---
 
-### Task 1: Add browser configuration and stable browser errors
+### Task 1: Add browser configuration and stable browser errors — completed
+
+Committed as `db6b62c`. It added loopback CDP configuration, the k81128 account-page origin, operation timeout configuration, and stable `BROWSER_UNAVAILABLE` handling.
+
+### Task 2: Build a serial browser-operation queue — completed
+
+Committed as `3572fbe`. It added strict serialization, bounded pending work, timeout abort signals, and sanitized timeout failures.
+
+### Task 3: Implement a dependency-free loopback CDP gateway — completed
+
+Committed as `b32536a`. It added exact-origin target discovery, bounded evaluation responses, sanitized failures, and reconnect-on-next-request behavior.
+
+### Task 4: Add the independent IM Sports origin
 
 **Files:**
 - Modify: `.env.example`
 - Modify: `src/config.js`
-- Modify: `src/upstream/errors.js`
-- Modify: `src/app.js`
+- Modify: `src/browser/gateway.js`
 - Test: `test/config.test.js`
-- Test: `test/app.test.js`
-
-**Step 1: Write failing configuration and HTTP mapping tests**
-
-Add tests requiring these defaults and validations:
-
-- `UPSTREAM_MODE=browser`
-- `BROWSER_CDP_URL=http://127.0.0.1:9223`
-- `BROWSER_PAGE_ORIGIN=https://k81128.com`
-- `BROWSER_OPERATION_TIMEOUT_MS=15000`
-- Reject non-loopback CDP hosts.
-- Reject non-HTTPS page origins.
-- Map `BROWSER_UNAVAILABLE` to HTTP `503` with a sanitized message.
-
-**Step 2: Run focused tests and verify failure**
-
-Run: `node --test test/config.test.js test/app.test.js`
-
-Expected: FAIL because browser settings and `BROWSER_UNAVAILABLE` do not exist.
-
-**Step 3: Implement minimum settings and mapping**
-
-Extend `loadConfig()` and `publicConfig()` without exposing secrets. Add `CODES.BROWSER_UNAVAILABLE`. Keep existing direct-client settings for test compatibility, but select production behavior using `UPSTREAM_MODE`.
-
-**Step 4: Run focused and full tests**
-
-Run: `node --test test/config.test.js test/app.test.js && npm test`
-
-Expected: PASS.
-
-**Step 5: Commit**
-
-```bash
-git add .env.example src/config.js src/upstream/errors.js src/app.js test/config.test.js test/app.test.js
-git commit -m "feat: add secure browser bridge configuration"
-```
-
-### Task 2: Build a serial browser-operation queue
-
-**Files:**
-- Create: `src/browser/operation-queue.js`
-- Test: `test/browser-operation-queue.test.js`
-
-**Step 1: Write failing queue tests**
-
-Cover:
-
-- operations execute strictly one at a time;
-- later work continues after an earlier rejection;
-- per-operation timeout maps to `UPSTREAM_TIMEOUT`;
-- timeout does not retain or expose the underlying error object;
-- queue depth is bounded to reject overload without allocating unbounded work.
-
-**Step 2: Run test and verify failure**
-
-Run: `node --test test/browser-operation-queue.test.js`
-
-Expected: FAIL because the module does not exist.
-
-**Step 3: Implement the minimum queue**
-
-Use a private promise tail, a fixed maximum pending count, and an unreferenced timeout. Do not cancel unrelated queued operations when one operation times out.
-
-**Step 4: Run focused and full tests**
-
-Run: `node --test test/browser-operation-queue.test.js && npm test`
-
-Expected: PASS.
-
-**Step 5: Commit**
-
-```bash
-git add src/browser/operation-queue.js test/browser-operation-queue.test.js
-git commit -m "feat: serialize browser operations"
-```
-
-### Task 3: Implement a dependency-free loopback CDP gateway
-
-**Files:**
-- Create: `src/browser/cdp-client.js`
-- Create: `src/browser/gateway.js`
-- Test: `test/cdp-client.test.js`
 - Test: `test/browser-gateway.test.js`
 
-**Step 1: Write failing CDP transport tests**
+**Step 1: Write failing configuration tests**
 
-Use fake `fetch` and fake WebSocket implementations. Cover:
+Require `BROWSER_SPORTS_ORIGIN` to default to the exact IM Sports HTTPS origin, reject credentials, paths, query strings, and fragments, and expose only the sanitized origin from `publicConfig()`.
 
-- `/json/list` is fetched only from the configured loopback CDP origin;
-- only `type: "page"` targets on the exact allow-listed origin are accepted;
-- lookalike origins such as `k81128.com.evil.example` are rejected;
-- `Runtime.evaluate` uses `returnByValue: true` and `awaitPromise: true`;
-- response IDs resolve only their matching requests;
-- CDP error frames and socket closure reject pending calls with sanitized errors;
-- reconnect occurs on the next request after a disconnect;
-- response values are capped before leaving the gateway.
+**Step 2: Run the tests to verify RED**
 
-**Step 2: Run tests and verify failure**
+Run: `node --test test/config.test.js test/browser-gateway.test.js`
 
-Run: `node --test test/cdp-client.test.js test/browser-gateway.test.js`
+Expected: FAIL because `browserSportsOrigin` does not exist and origin-only validation is not yet enforced.
 
-Expected: FAIL because the modules do not exist.
+**Step 3: Implement the minimum origin-only configuration**
 
-**Step 3: Implement the transport and target selector**
-
-Use Node.js 22's built-in `WebSocket`. Never log the `webSocketDebuggerUrl`, page response, or evaluation exception details. The public gateway contract is:
-
-```js
-await gateway.evaluate(expression, { timeoutMs });
-await gateway.status();
-await gateway.close();
-```
-
-`status()` returns only `connected`, `page_found`, or `unavailable` and never exposes page titles, account identifiers, or CDP URLs.
+Add a reusable HTTPS-origin parser. Keep `browserPageOrigin` for k81128 account reads and add `browserSportsOrigin` for sports reads. Gateway discovery may inspect a target URL only to compare its `origin`; it must never return or log the full target URL.
 
 **Step 4: Run focused and full tests**
 
-Run: `node --test test/cdp-client.test.js test/browser-gateway.test.js && npm test`
+Run: `node --test test/config.test.js test/browser-gateway.test.js && npm test`
 
 Expected: PASS.
 
 **Step 5: Commit**
 
 ```bash
-git add src/browser/cdp-client.js src/browser/gateway.js test/cdp-client.test.js test/browser-gateway.test.js
-git commit -m "feat: add loopback Chrome CDP gateway"
+git add .env.example src/config.js src/browser/gateway.js test/config.test.js test/browser-gateway.test.js
+git commit -m "feat: configure independent sports browser origin"
 ```
 
-### Task 4: Add verified sports DOM reading and normalization
+### Task 5: Normalize IM Sports event and market models
 
 **Files:**
 - Create: `src/browser/readers/sports.js`
-- Create: `test/fixtures/browser-sports-dom.json`
-- Test: `test/browser-sports-reader.test.js`
-- Modify: `docs/k81128-upstream.md`
+- Create: `test/fixtures/im-sports-raw.json`
+- Create: `test/browser-sports-reader.test.js`
 
-**Step 1: Save only sanitized verified selectors**
+**Step 1: Add a sanitized synthetic raw fixture**
 
-Document the 2026-07-19 read-only discovery:
+The fixture contains no real account, URL token, Cookie, browser storage, or full production snapshot. Include live football, today basketball, and early tennis examples with 1X2, handicap, total, locked, and missing odds.
 
-- card: `.ysb-item`
-- competition: `.ysb-item__body__title__competition`
-- start text: `.ysb-item__body__title__time`
-- teams: `.ysb-item__body__team-match .col`
-- selections: `.odd-wrapper .odd-item`
-- selection name: `.competition-result`
-- decimal odds: `.odds-rate span`
+**Step 2: Write failing model tests**
 
-Do not save screenshots, account names, balance values, or browser storage.
+Test the exported `normalizeSportsPayload(raw, options)` contract:
 
-**Step 2: Write failing reader tests**
-
-Cover:
-
-- 1X2 selections map to the stable public sports model;
-- `MM-DD HH:mm` is assigned the correct Asia/Shanghai year, including December-to-January rollover;
-- a deterministic synthetic `event_id` is derived from competition, start time, and teams;
-- missing teams, time, selections, or odds produce `UPSTREAM_SCHEMA_CHANGED`;
-- page showing the login form produces `UPSTREAM_AUTH_EXPIRED`;
-- no event cards produces schema failure rather than a fake empty success.
-
-**Step 3: Implement expression generation and Node-side validation**
-
-The browser expression returns only bounded plain JSON from at most 200 cards. Hash event identity in Node with SHA-256; do not use DOM indexes as IDs. Parse odds as decimal strings before applying public numeric conversion.
-
-**Step 4: Run tests**
-
-Run: `node --test test/browser-sports-reader.test.js && npm test`
-
-Expected: PASS.
-
-**Step 5: Commit**
-
-```bash
-git add src/browser/readers/sports.js test/fixtures/browser-sports-dom.json test/browser-sports-reader.test.js docs/k81128-upstream.md
-git commit -m "feat: read verified sports data from Chrome"
-```
-
-### Task 5: Add verified wallet and game-record readers
-
-**Files:**
-- Create: `src/browser/readers/balance.js`
-- Create: `src/browser/readers/bets.js`
-- Create: `test/fixtures/browser-balance-dom.json`
-- Create: `test/fixtures/browser-bets-dom.json`
-- Test: `test/browser-balance-reader.test.js`
-- Test: `test/browser-bets-reader.test.js`
-- Modify: `docs/k81128-upstream.md`
-
-**Step 1: Record the verified selectors and routes**
-
-Balance selectors:
-
-- wallet list: `.balances .wallets .wallet`
-- currency label: `.cy`
-- amount: `.balanceAmout`
-- active wallet: `.wallet.active`
-
-Game-record route and selectors:
-
-- route: `/assetDetails/gameRecord`
-- table: `.gameTable`
-- body: `.gameTable .recordList`
-- empty state: `.noRecord` with `暂无记录`
-- columns: time, type, game round ID, stake, payout.
-
-The reliable navigation path is the visible account menu `li.mainItem.record`, which opens `/assetDetails/depositRecord`, followed by the exact `电游记录` tab. Direct navigation is allowed only after the gateway has already confirmed a logged-in allow-listed page.
-
-**Step 2: Write failing balance tests**
-
-Return a truthful model:
-
-```json
+```js
 {
-  "active_currency": "USDT",
-  "total": 0.24,
-  "wallets": [
-    {"currency":"CNY","amount":0.98},
-    {"currency":"USDT","amount":0.24}
-  ]
+  events: [{
+    event_id: '111486996',
+    sport: 'football',
+    scope: 'live',
+    league: 'Example League',
+    home: 'Home',
+    away: 'Away',
+    score: { home: 0, away: 0 },
+    clock: '2H 77:24',
+    markets: [{
+      period: 'full_time',
+      type: '1x2',
+      selections: [{
+        selection_key: '111486996:full_time:1x2:home',
+        name: 'home',
+        display_odds: '6.43',
+        odds_format: 'hong_kong',
+        decimal_odds: '7.43',
+        available: true,
+      }],
+    }],
+  }],
+  count: 1,
+  truncated: false,
 }
 ```
 
-Cover multiple wallets, active-wallet selection, decimal precision, missing active wallet, login form, and schema changes.
+Cover scope and sport filters, exact decimal-string `+ 1`, stable selection keys, locked selections without decimal odds, missing odds, duplicate event merging, required-field failures, unknown scope/sport failures, and the 500-event limit.
 
-**Step 3: Write failing bet-reader tests**
+**Step 3: Run the tests to verify RED**
 
-Cover empty record list, one and multiple rows, limit enforcement, deterministic cursor slicing, decimal precision, missing columns, and login form. Do not invent sport-bet fields that the verified game-record table does not expose.
+Run: `node --test test/browser-sports-reader.test.js`
 
-The first browser-backed public bet model is:
+Expected: FAIL because the reader module does not exist.
 
-```json
-{
-  "bet_id": "<game round id>",
-  "placed_at": "<ISO 8601>",
-  "type": "<provider/game type>",
-  "stake": 10,
-  "currency": "USDT",
-  "payout": 0
-}
-```
+**Step 4: Implement the minimum validator and normalizer**
 
-**Step 4: Implement bounded DOM expressions and validators**
-
-Read at most 200 wallet/row elements. Return `[]` only when the verified `.noRecord` state is present. Treat a missing table as a schema or authentication error.
+Use strict allow-lists for scopes and normalized sports keys. Parse event IDs from validated numeric strings. Implement decimal-string addition without `Number` arithmetic. Remove empty markets but preserve locked selections. Throw `UPSTREAM_SCHEMA_CHANGED` for malformed page payloads.
 
 **Step 5: Run focused and full tests**
 
-Run: `node --test test/browser-balance-reader.test.js test/browser-bets-reader.test.js && npm test`
+Run: `node --test test/browser-sports-reader.test.js && npm test`
 
 Expected: PASS.
 
 **Step 6: Commit**
 
 ```bash
-git add src/browser/readers/balance.js src/browser/readers/bets.js test/fixtures/browser-balance-dom.json test/fixtures/browser-bets-dom.json test/browser-balance-reader.test.js test/browser-bets-reader.test.js docs/k81128-upstream.md
-git commit -m "feat: read wallets and game records from Chrome"
+git add src/browser/readers/sports.js test/fixtures/im-sports-raw.json test/browser-sports-reader.test.js
+git commit -m "feat: normalize IM Sports odds models"
 ```
 
-### Task 6: Build and wire the BrowserUpstreamAdapter
+### Task 6: Build the bounded IM Sports DOM expression
+
+**Files:**
+- Modify: `src/browser/readers/sports.js`
+- Modify: `test/browser-sports-reader.test.js`
+- Create: `docs/im-sports-upstream.md`
+
+**Step 1: Write failing expression safety and selector tests**
+
+Test `buildSportsExpression({ maxEvents: 500 })` for the verified selectors (`.eventlisting_wrap`, `.competition_header_team`, `.event_row`, `a[href^="/sev/"]`, `.teamname_title`, `.score`, `.datetime`, `.event_even.double`, `.handi`, `.ou`, `.odds`, `.lock`). Assert it has a hard event bound and does not contain `cookie`, `localStorage`, `sessionStorage`, `indexedDB`, URL query parsing, `fetch`, or network interception.
+
+**Step 2: Run the tests to verify RED**
+
+Run: `node --test test/browser-sports-reader.test.js`
+
+Expected: FAIL because the expression builder does not exist.
+
+**Step 3: Implement the minimum expression**
+
+Walk each sports section and competition in document order. Read the primary team-bearing event row, extract only the numeric event ID from `/sev/.../<id>`, and map verified full-time 1X2, handicap, and total cells to the raw fixture shape. Return explicit page markers so Node can distinguish valid empty data from login/redirect/schema failure.
+
+**Step 4: Document only sanitized upstream structure**
+
+Record origin-only matching, selectors, supported markets, limits, authentication/schema markers, and the prohibition on storing real snapshots or venue URLs.
+
+**Step 5: Run focused and full tests**
+
+Run: `node --test test/browser-sports-reader.test.js && npm test`
+
+Expected: PASS.
+
+**Step 6: Commit**
+
+```bash
+git add src/browser/readers/sports.js test/browser-sports-reader.test.js docs/im-sports-upstream.md
+git commit -m "feat: read bounded IM Sports DOM data"
+```
+
+### Task 7: Wire BrowserUpstreamAdapter with two gateways and one queue
 
 **Files:**
 - Create: `src/upstream/browser.js`
 - Modify: `src/server.js`
-- Modify: `src/app.js`
 - Test: `test/browser-upstream.test.js`
 - Test: `test/server.test.js`
-- Test: `test/app.test.js`
 
-**Step 1: Write failing adapter and server tests**
+**Step 1: Write failing adapter tests**
 
-Cover:
+Cover sports calls through the sports gateway, account calls through the account gateway, strict serialization across both gateways, operation timeout, sanitized browser/auth/schema errors, gateway close lifecycle, and no automatic fallback to k81128 homepage sports.
 
-- all three methods run through one operation queue;
-- readers receive only gateway results;
-- browser unavailable, auth expired, timeout, and schema errors remain sanitized;
-- `UPSTREAM_MODE=browser` wires the real adapter;
-- test injection still supports fake upstreams;
-- `/health` includes only `browser_status`, never account data;
-- server shutdown closes the gateway.
+**Step 2: Run the tests to verify RED**
 
-**Step 2: Run focused tests and verify failure**
-
-Run: `node --test test/browser-upstream.test.js test/server.test.js test/app.test.js`
+Run: `node --test test/browser-upstream.test.js test/server.test.js`
 
 Expected: FAIL because the browser adapter is not wired.
 
-**Step 3: Implement the adapter and lifecycle**
+**Step 3: Implement the minimum adapter and server wiring**
 
-Use reader-specific navigation/evaluation steps. Do not retry an operation after a partial page navigation in the same request. Connection recovery happens on the next API request.
+Instantiate exact-origin gateways that share one `createBrowserOperationQueue()`. `getSports(options)` evaluates the sports expression and normalizes it. Browser mode becomes the production upstream; test injection and existing HTTP mode remain supported.
 
 **Step 4: Run focused and full tests**
 
-Run: `node --test test/browser-upstream.test.js test/server.test.js test/app.test.js && npm test`
+Run: `node --test test/browser-upstream.test.js test/server.test.js && npm test`
 
 Expected: PASS.
 
 **Step 5: Commit**
 
 ```bash
-git add src/upstream/browser.js src/server.js src/app.js test/browser-upstream.test.js test/server.test.js test/app.test.js
-git commit -m "feat: wire Chrome browser upstream into API"
+git add src/upstream/browser.js src/server.js test/browser-upstream.test.js test/server.test.js
+git commit -m "feat: wire dual-page browser upstream"
 ```
 
-### Task 7: Add the dedicated Chrome launcher and launchd templates
+### Task 8: Add `/api/sports` query, cache, and response metadata
+
+**Files:**
+- Modify: `src/app.js`
+- Modify: `src/response.js`
+- Modify: `src/upstream/fake.js`
+- Test: `test/app.test.js`
+- Test: `test/response.test.js`
+
+**Step 1: Write failing HTTP tests**
+
+Cover default `scope=all`, each allowed scope, optional normalized `sport`, repeated/unknown/empty parameters, unknown query keys, options passed to `upstream.getSports`, cache keys by scope and sport, TTLs of 1s/3s/10s, no stale fallback, and the response fields `events`, `count`, `truncated`, `source`, `fetched_at`, and `request_id`.
+
+**Step 2: Run the tests to verify RED**
+
+Run: `node --test test/app.test.js test/response.test.js`
+
+Expected: FAIL because sports query parsing and per-scope caching do not exist.
+
+**Step 3: Implement the minimum HTTP contract**
+
+Use a bounded `Map` keyed by canonical `scope + sport`, with `all` sharing the 1-second live TTL. Never serve expired entries after an upstream failure. Preserve current stable browser error mappings.
+
+**Step 4: Run focused and full tests**
+
+Run: `node --test test/app.test.js test/response.test.js && npm test`
+
+Expected: PASS.
+
+**Step 5: Commit**
+
+```bash
+git add src/app.js src/response.js src/upstream/fake.js test/app.test.js test/response.test.js
+git commit -m "feat: expose filtered IM Sports odds API"
+```
+
+### Task 9: Add k81128 balance and game-record readers
+
+**Files:**
+- Create: `src/browser/readers/balance.js`
+- Create: `src/browser/readers/bets.js`
+- Create: `test/fixtures/browser-balance-dom.json`
+- Create: `test/fixtures/browser-bets-dom.json`
+- Create: `test/browser-balance-reader.test.js`
+- Create: `test/browser-bets-reader.test.js`
+- Modify: `src/upstream/browser.js`
+- Create: `docs/k81128-upstream.md`
+
+**Steps:** Follow TDD for the verified account selectors, truthful empty-record state, bounded row counts, and sanitized auth/schema failures. These readers use only the k81128 account gateway and must never affect `/api/sports` availability or data.
+
+Run: `node --test test/browser-balance-reader.test.js test/browser-bets-reader.test.js test/browser-upstream.test.js && npm test`
+
+Commit: `feat: read k81128 account data from Chrome`
+
+### Task 10: Add dedicated Chrome and local service templates
 
 **Files:**
 - Create: `scripts/start-k8-chrome.mjs`
 - Create: `deploy/com.nbmrjun.k8-chrome.plist`
 - Modify: `deploy/com.nbmrjun.k8-api.plist`
+- Modify: `.gitignore`
 - Modify: `package.json`
-- Test: `test/chrome-launcher.test.js`
+- Create: `test/chrome-launcher.test.js`
 
-**Step 1: Write failing launcher tests**
+**Steps:** TDD the dedicated external profile requirement, loopback-only CDP flags, two origin-only starting pages, and rejection of any configured sports URL containing path/query/fragment. Templates contain placeholders only and are not installed by tests.
 
-Cover:
+Run: `node --test test/chrome-launcher.test.js test/scripts.test.js && npm test`
 
-- Chrome path defaults to `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`;
-- profile defaults to a dedicated project-external directory supplied through `K8_CHROME_PROFILE_DIR`;
-- arguments bind CDP to `127.0.0.1:9223`;
-- remote debugging port cannot be published on `0.0.0.0`;
-- existing Chrome process detection does not reveal command-line secrets;
-- the launcher never prints the profile path, account identifier, or environment values.
+Commit: `feat: add dedicated Chrome service templates`
 
-**Step 2: Implement launcher and plist templates**
-
-The launcher opens `https://k81128.com/sports` and leaves login to the user. The Chrome launchd job uses `RunAtLoad`; the API job uses `KeepAlive` and starts after Chrome availability is independently checked by the adapter.
-
-**Step 3: Validate**
-
-Run: `node --test test/chrome-launcher.test.js && npm test`
-
-Run: `plutil -lint deploy/com.nbmrjun.k8-chrome.plist deploy/com.nbmrjun.k8-api.plist`
-
-Expected: tests PASS and both plist files are valid.
-
-**Step 4: Commit**
-
-```bash
-git add scripts/start-k8-chrome.mjs deploy/com.nbmrjun.k8-chrome.plist deploy/com.nbmrjun.k8-api.plist package.json test/chrome-launcher.test.js
-git commit -m "feat: add dedicated Chrome runtime templates"
-```
-
-### Task 8: Document local operations and verify with the user's logged-in Chrome
+### Task 11: Document operations and perform read-only local verification
 
 **Files:**
+- Create: `docs/browser-bridge-runbook.md`
 - Modify: `README.md`
-- Create: `docs/operations.md`
 - Modify: `.env.example`
+- Modify: `scripts/smoke-test.sh`
+- Modify: `test/scripts.test.js`
 
-**Step 1: Document the exact operating flow**
+**Steps:** Document manual login, keeping both tabs open, start/stop/recovery, session-expiry symptoms, domain/tunnel setup, secret rotation, and rollback. Run sanitized unit tests first. With the user-managed Chrome session available, integration verification may check only HTTP status, shape, source, and event count; it must not save a real response body or page URL.
 
-Include:
+Run: `npm test && npm run check && git diff --check`
 
-1. start dedicated Chrome;
-2. user manually logs into k81128;
-3. verify CDP is loopback-only;
-4. start API with `.env.local`;
-5. verify health, sports, balance, and bets locally;
-6. renew an expired login without changing API credentials;
-7. rotate the API Bearer Token;
-8. stop Chrome/API and roll back launchd templates.
+Commit: `docs: add secure browser bridge runbook`
 
-**Step 2: Run the complete verification suite**
+### Task 12: Configure the existing Cloudflare Tunnel — explicit deployment step
 
-Run: `npm test`
+Before changing persistent Mac or Cloudflare state, inspect the existing tunnel configuration, back it up, validate the candidate config, and obtain any permission required by the environment. Add only the hostname route to `http://127.0.0.1:8788`; never expose the CDP port. Verify local and remote unauthorized requests return `401`, then verify an authorized `/api/sports?scope=live` request from the user's server without printing the token or response body.
 
-Run: `plutil -lint deploy/com.nbmrjun.k8-chrome.plist deploy/com.nbmrjun.k8-api.plist`
-
-Expected: all tests PASS.
-
-**Step 3: Run a local read-only integration check**
-
-Start the dedicated Chrome and API without printing `.env.local`. Call:
-
-```bash
-curl -sS http://127.0.0.1:8788/health
-curl -sS -H "Authorization: Bearer $API_TOKEN" http://127.0.0.1:8788/api/sports
-curl -sS -H "Authorization: Bearer $API_TOKEN" http://127.0.0.1:8788/api/balance
-curl -sS -H "Authorization: Bearer $API_TOKEN" "http://127.0.0.1:8788/api/bets?limit=25"
-```
-
-Do not include command output containing account identifiers in Git or logs. Validate only field shapes and status codes in the handoff report.
-
-**Step 4: Scan for secret leakage**
-
-Confirm `.env.local` and the dedicated Chrome profile are ignored/untracked. Search tracked files for the real API token without printing it. Inspect service logs for `Authorization`, Cookie, token, password, and account-name patterns.
-
-**Step 5: Commit**
-
-```bash
-git add README.md docs/operations.md .env.example
-git commit -m "docs: add browser bridge operations guide"
-```
-
-### Task 9: Publish through the existing Cloudflare Tunnel
-
-**Files:**
-- Modify outside repository only after explicit filesystem permission: `/Users/apple/.cloudflared/sporttery.yml`
-
-**Step 1: Read and back up current tunnel configuration**
-
-Confirm the active tunnel ID, current ingress ordering, and existing `odds.nbmrjun.top` behavior. Create a dated backup before editing.
-
-**Step 2: Add ingress before catch-all**
-
-```yaml
-- hostname: k8.nbmrjun.top
-  service: http://127.0.0.1:8788
-```
-
-Never expose `127.0.0.1:9223` through Cloudflare.
-
-**Step 3: Validate and route DNS**
-
-Run the installed `cloudflared` ingress validator. Create or verify the DNS route for `k8.nbmrjun.top`. Restart only the identified tunnel process.
-
-**Step 4: Verify old and new hostnames**
-
-Confirm the existing hostname still behaves as before. Verify public `/health`, unauthorized `401`, and authorized read-only endpoints without printing the token or account data.
-
-**Step 5: Record operations result**
-
-Update `docs/operations.md` with the service name, rollback command, and non-secret validation results. Commit only repository documentation; do not commit the user's Cloudflare configuration.
-
-### Task 10: Final security and behavior review
-
-**Files:**
-- Modify only files required by review findings.
-
-**Step 1: Run fresh verification**
-
-Run: `npm test`
-
-Run: `git diff --check main...HEAD`
-
-Run: `git status --short`
-
-Expected: all tests PASS, no whitespace errors, and only intentional files are changed.
-
-**Step 2: Audit the write boundary**
-
-Search production code for click, input, form submission, storage access, Cookie access, and non-GET business operations. The only allowed browser navigation is to verified read-only pages. Confirm no betting, deposit, withdrawal, or transfer action exists.
-
-**Step 3: Audit network exposure**
-
-Confirm API and CDP defaults are `127.0.0.1`; only API port 8788 is referenced by Tunnel; CDP port 9223 never appears in a public ingress rule.
-
-**Step 4: Prepare merge handoff**
-
-Summarize implemented endpoints, test count, local integration result, tunnel status, known limitation that `/api/bets` currently represents the verified electronic-game record table, and the separate safety design required before any future wagering feature.
+This task is complete only after rollback is documented and existing tunnel hostnames remain healthy.
