@@ -1,0 +1,26 @@
+{
+  "fixture_contract": "UNVERIFIED_SANITIZED_PLAUSIBLE_SHAPE_V1",
+  "data": {
+    "events": [
+      {
+        "id": "evt-1001",
+        "competition": { "name": "Premier League" },
+        "start_time": 1784476800000,
+        "participants": {
+          "home": { "name": "North City" },
+          "away": { "name": "South United" }
+        },
+        "markets": [
+          {
+            "name": "match_winner",
+            "selections": [
+              { "name": "North City", "odds": "1.95" },
+              { "name": "Draw", "odds": "3.40" },
+              { "name": "South United", "odds": "4.10" }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

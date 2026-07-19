@@ -1,0 +1,11 @@
+{
+  "fixture_contract": "UNVERIFIED_SANITIZED_PLAUSIBLE_SHAPE_V1",
+  "data": {
+    "wallet": {
+      "currency_code": "CNY",
+      "available_amount": "1234.50",
+      "locked_amount": "100.25",
+      "total_amount": "1334.75"
+    }
+  }
+}

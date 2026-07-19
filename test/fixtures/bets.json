@@ -1,0 +1,17 @@
+{
+  "fixture_contract": "UNVERIFIED_SANITIZED_PLAUSIBLE_SHAPE_V1",
+  "data": {
+    "bets": [
+      {
+        "id": "bet-2001",
+        "created_at": "2026-07-19T20:15:30+08:00",
+        "state": "settled",
+        "stake_amount": "9007199254740993.25",
+        "currency_code": "CNY",
+        "pick": "North City",
+        "decimal_odds": "1.95",
+        "payout_amount": "17564038546744936.8375"
+      }
+    ]
+  }
+}

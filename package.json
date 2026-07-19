@@ -1,0 +1,16 @@
+{
+  "name": "k81128-readonly-api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Token-protected read-only API for k81128 data",
+  "main": "src/server.js",
+  "scripts": {
+    "generate-token": "node scripts/generate-token.mjs --output .env.local",
+    "smoke": "node --env-file=.env.local scripts/smoke-test.mjs",
+    "start": "node --env-file=.env.local src/server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

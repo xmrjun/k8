@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.nbmrjun.k8-api</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/node</string>
+    <string>--env-file=.env.local</string>
+    <string>src/server.js</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/apple/Documents/Codex/2026-07-19/chrome-cookie-local-storage/k8</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/apple/Library/Logs/k8-api.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/apple/Library/Logs/k8-api-error.log</string>
+</dict>
+</plist>
