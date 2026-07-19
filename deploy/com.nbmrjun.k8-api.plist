@@ -12,6 +12,11 @@
   </array>
   <key>WorkingDirectory</key>
   <string>/Users/apple/Documents/Codex/2026-07-19/chrome-cookie-local-storage/k8</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>BROWSER_TRANSPORT</key>
+    <string>apple_events</string>
+  </dict>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>

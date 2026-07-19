@@ -20,6 +20,14 @@ The 2026-07-19 read-only inspection established these selectors:
 
 The reader extracts only the primary team-bearing row and the first verified full-time 1X2, handicap, and total groups. It reads at most 500 events and returns ordinary JSON fields. It does not click, navigate, place bets, issue page requests, inspect request headers, or access browser storage.
 
+## Current Chrome transport
+
+The default `apple_events` transport uses a repository-owned JXA helper. For each Chrome tab, the helper executes only `location.origin` and compares the result with the configured pure HTTPS origin. It must not request the Chrome tab's full URL property: the full venue URL may contain browser-managed query data and must not appear in process output, configuration, logs, tests, or API responses.
+
+After an exact origin match, the helper evaluates only a repository-owned, bounded, read-only DOM expression. HTTP clients cannot supply JavaScript expressions. The Node gateway starts the fixed `/usr/bin/osascript` binary with separate arguments and no shell, caps expression and response sizes, and replaces process or permission failures with sanitized browser errors.
+
+Chrome must have **View > Developer > Allow JavaScript from Apple Events** enabled. The macOS **Privacy & Security > Automation** permission for the process running this API must also allow control of Google Chrome.
+
 ## Status markers
 
 - A visible login form becomes `login_required`, which maps to `UPSTREAM_AUTH_EXPIRED`.

@@ -8,6 +8,10 @@ const { pathToFileURL } = require('node:url');
 
 const projectRoot = path.join(__dirname, '..');
 
+function projectFile(name) {
+  return fs.readFileSync(path.join(projectRoot, name), 'utf8');
+}
+
 async function importScript(name) {
   return import(pathToFileURL(path.join(projectRoot, 'scripts', name)).href);
 }
@@ -102,5 +106,31 @@ test('smokeTest rejects a protected-route authentication failure', async () => {
       fetchImpl: async () => responses.shift(),
     }),
     /authentication failed/,
+  );
+});
+
+test('operations docs describe the secure current-Chrome setup and CDP fallback', () => {
+  const readme = projectFile('README.md');
+  const sportsDocs = projectFile('docs/im-sports-upstream.md');
+  const launchAgent = projectFile('deploy/com.nbmrjun.k8-api.plist');
+
+  assert.match(readme, /BROWSER_TRANSPORT=apple_events/);
+  assert.match(readme, /Allow JavaScript from Apple Events/);
+  assert.match(readme, /Automation.*Google Chrome/s);
+  assert.match(readme, /127\.0\.0\.1:8788/);
+  assert.match(readme, /BROWSER_TRANSPORT=cdp/);
+  assert.match(sportsDocs, /location\.origin/);
+  assert.match(sportsDocs, /must not.*full.*URL/is);
+  assert.match(launchAgent, /<key>BROWSER_TRANSPORT<\/key>\s*<string>apple_events<\/string>/);
+});
+
+test('package exposes native syntax checks for production JavaScript and JXA', () => {
+  const packageJson = JSON.parse(projectFile('package.json'));
+
+  assert.match(packageJson.scripts.check, /node --check src\/server\.js/);
+  assert.match(packageJson.scripts.check, /node --check src\/browser\/apple-events-gateway\.js/);
+  assert.match(
+    packageJson.scripts.check,
+    /\/usr\/bin\/osacompile -l JavaScript -o \/dev\/null scripts\/chrome-evaluate\.jxa/,
   );
 });

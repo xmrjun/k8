@@ -8,6 +8,7 @@
     "generate-token": "node scripts/generate-token.mjs --output .env.local",
     "smoke": "node --env-file=.env.local scripts/smoke-test.mjs",
     "start": "node --env-file=.env.local src/server.js",
+    "check": "node --check src/server.js && node --check src/browser/apple-events-gateway.js && /usr/bin/osacompile -l JavaScript -o /dev/null scripts/chrome-evaluate.jxa",
     "test": "node --test test/*.test.js"
   },
   "engines": {
