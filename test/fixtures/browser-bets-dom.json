@@ -1,0 +1,21 @@
+{
+  "status": "ready",
+  "empty": false,
+  "currency": "USDT",
+  "rows": [
+    {
+      "placed_at": "2026-07-19 20:15:30",
+      "type": "Example Game",
+      "bet_id": "ROUND-900001",
+      "stake": "10.00",
+      "payout": "0.00"
+    },
+    {
+      "placed_at": "2026-07-19 20:16:30",
+      "type": "Example Game Two",
+      "bet_id": "ROUND-900002",
+      "stake": "2.50",
+      "payout": "4.75"
+    }
+  ]
+}

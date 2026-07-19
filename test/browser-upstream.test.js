@@ -188,3 +188,35 @@ test('close releases both browser gateways', async () => {
     { name: 'account', close: true },
   ]);
 });
+
+test('default account readers normalize balance and game records on the account gateway', async () => {
+  const accountGateway = {
+    async evaluate(expression) {
+      if (expression.includes('.gameTable')) {
+        return {
+          status: 'ready',
+          empty: true,
+          currency: 'USDT',
+          rows: [],
+        };
+      }
+      return {
+        status: 'ready',
+        wallets: [{ currency: 'USDT', amount: '1.25', active: true }],
+      };
+    },
+    async close() {},
+  };
+  const upstream = createBrowserUpstream({
+    sportsGateway: gateway('sports', []),
+    accountGateway,
+    queue: createOperationQueue(),
+  });
+
+  assert.deepEqual(await upstream.getBalance(), {
+    active_currency: 'USDT',
+    total: 1.25,
+    wallets: [{ currency: 'USDT', amount: 1.25 }],
+  });
+  assert.deepEqual(await upstream.getBets({ limit: 25 }), []);
+});

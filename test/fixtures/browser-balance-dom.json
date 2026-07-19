@@ -1,0 +1,7 @@
+{
+  "status": "ready",
+  "wallets": [
+    { "currency": "CNY", "amount": "0.98", "active": false },
+    { "currency": "USDT", "amount": "0.24", "active": true }
+  ]
+}

@@ -1,6 +1,8 @@
 'use strict';
 
 const { buildSportsExpression, normalizeSportsPayload } = require('../browser/readers/sports');
+const { buildBalanceExpression, normalizeBalancePayload } = require('../browser/readers/balance');
+const { buildBetsExpression, normalizeBetsPayload } = require('../browser/readers/bets');
 const { CODES, UpstreamError, upstreamError } = require('./errors');
 
 const KNOWN_CODES = new Set(Object.values(CODES));
@@ -10,13 +12,14 @@ const sportsReader = Object.freeze({
   normalize: normalizeSportsPayload,
 });
 
-const unavailableReader = Object.freeze({
-  buildExpression() {
-    throw upstreamError(CODES.SCHEMA_CHANGED, 'Browser account reader is not available');
-  },
-  normalize() {
-    throw upstreamError(CODES.SCHEMA_CHANGED, 'Browser account reader is not available');
-  },
+const balanceReader = Object.freeze({
+  buildExpression: () => buildBalanceExpression({ maxWallets: 20 }),
+  normalize: normalizeBalancePayload,
+});
+
+const betsReader = Object.freeze({
+  buildExpression: () => buildBetsExpression({ maxRows: 200 }),
+  normalize: normalizeBetsPayload,
 });
 
 function trustedError(error) {
@@ -38,8 +41,8 @@ function createBrowserUpstream({
 
   const selectedReaders = {
     sports: readers.sports || sportsReader,
-    balance: readers.balance || unavailableReader,
-    bets: readers.bets || unavailableReader,
+    balance: readers.balance || balanceReader,
+    bets: readers.bets || betsReader,
   };
 
   async function perform(gateway, reader, options) {
