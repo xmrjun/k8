@@ -1,0 +1,45 @@
+'use strict';
+
+/*
+ * Read-only Chrome bridge. The Node caller supplies only a validated origin
+ * and one repository-owned DOM expression. Do not add URL, cookie, Web
+ * Storage, password, token, request-header, or request-signature access here.
+ */
+function run(argv) {
+  if (argv.length !== 2) throw new Error('Invalid arguments');
+  const expectedOrigin = argv[0];
+  const expression = argv[1];
+  if (!expectedOrigin.startsWith('https://')
+    || expectedOrigin.indexOf('/', 'https://'.length) !== -1
+    || expectedOrigin.includes('?')
+    || expectedOrigin.includes('#')
+    || expectedOrigin.includes('@')
+    || expression.length === 0) {
+    throw new Error('Invalid arguments');
+  }
+
+  const chrome = Application('Google Chrome');
+  const windows = chrome.windows();
+  for (let windowIndex = 0; windowIndex < windows.length; windowIndex += 1) {
+    const tabs = windows[windowIndex].tabs();
+    for (let tabIndex = 0; tabIndex < tabs.length; tabIndex += 1) {
+      const tab = tabs[tabIndex];
+      let origin;
+      try {
+        origin = tab.execute({ javascript: 'location.origin' });
+      } catch {
+        continue;
+      }
+      if (origin !== expectedOrigin) continue;
+
+      const serialized = tab.execute({
+        javascript: `JSON.stringify((${expression}))`,
+      });
+      if (typeof serialized !== 'string') {
+        throw new Error('Browser evaluation returned no JSON');
+      }
+      return serialized;
+    }
+  }
+  throw new Error('No allowed browser page is available');
+}
