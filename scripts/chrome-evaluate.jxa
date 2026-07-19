@@ -1,19 +1,24 @@
 'use strict';
 
 /*
- * Read-only Chrome bridge. The Node caller supplies only a validated origin
- * and one repository-owned DOM expression. Do not add URL, cookie, Web
+ * Read-only Chrome bridge. The Node caller supplies only a validated origin,
+ * pathname, and one repository-owned DOM expression. Do not add URL, cookie, Web
  * Storage, password, token, request-header, or request-signature access here.
  */
 function run(argv) {
-  if (argv.length !== 2) throw new Error('Invalid arguments');
+  if (argv.length !== 3) throw new Error('Invalid arguments');
   const expectedOrigin = argv[0];
-  const expression = argv[1];
+  const expectedPathname = argv[1];
+  const expression = argv[2];
   if (!expectedOrigin.startsWith('https://')
     || expectedOrigin.indexOf('/', 'https://'.length) !== -1
     || expectedOrigin.includes('?')
     || expectedOrigin.includes('#')
     || expectedOrigin.includes('@')
+    || !expectedPathname.startsWith('/')
+    || expectedPathname.includes('?')
+    || expectedPathname.includes('#')
+    || expectedPathname.includes('\\')
     || expression.length === 0) {
     throw new Error('Invalid arguments');
   }
@@ -32,6 +37,13 @@ function run(argv) {
         continue;
       }
       if (origin !== expectedOrigin) continue;
+      let pathname;
+      try {
+        pathname = tab.execute({ javascript: 'location.pathname' });
+      } catch {
+        continue;
+      }
+      if (pathname !== expectedPathname) continue;
 
       const serialized = tab.execute({
         javascript: `JSON.stringify((${expression}))`,

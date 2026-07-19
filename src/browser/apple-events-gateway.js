@@ -28,6 +28,18 @@ function allowedPageOrigin(value) {
   return parsed.origin;
 }
 
+function allowedPagePathname(value = '/') {
+  if (typeof value !== 'string' || !value.startsWith('/')
+    || value.includes('?') || value.includes('#') || value.includes('\\')) {
+    throw new TypeError('Page pathname must be an absolute path without query or fragment');
+  }
+  const parsed = new URL(value, 'https://path.invalid');
+  if (parsed.origin !== 'https://path.invalid' || parsed.pathname !== value) {
+    throw new TypeError('Page pathname must be an absolute path without query or fragment');
+  }
+  return value;
+}
+
 function positiveInteger(value, name) {
   if (!Number.isInteger(value) || value <= 0) {
     throw new TypeError(`${name} must be a positive integer`);
@@ -78,11 +90,13 @@ function runProcess(command, args, { signal, maxOutputBytes }) {
 
 function createAppleEventsGateway({
   pageOrigin,
+  pagePathname = '/',
   runImpl = runProcess,
   maxExpressionBytes = 64 * 1024,
   maxResponseBytes = 1_000_000,
 } = {}) {
   const expectedPageOrigin = allowedPageOrigin(pageOrigin);
+  const expectedPagePathname = allowedPagePathname(pagePathname);
   positiveInteger(maxExpressionBytes, 'maxExpressionBytes');
   positiveInteger(maxResponseBytes, 'maxResponseBytes');
   if (typeof runImpl !== 'function') throw new TypeError('runImpl must be a function');
@@ -102,6 +116,7 @@ function createAppleEventsGateway({
         'JavaScript',
         HELPER_PATH,
         expectedPageOrigin,
+        expectedPagePathname,
         expression,
       ], {
         signal,

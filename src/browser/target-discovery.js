@@ -38,6 +38,18 @@ function allowedPageOrigin(value) {
   return parsed.origin;
 }
 
+function allowedPagePathname(value = '/') {
+  if (typeof value !== 'string' || !value.startsWith('/')
+    || value.includes('?') || value.includes('#') || value.includes('\\')) {
+    throw new TypeError('Page pathname must be an absolute path without query or fragment');
+  }
+  const parsed = new URL(value, 'https://path.invalid');
+  if (parsed.origin !== 'https://path.invalid' || parsed.pathname !== value) {
+    throw new TypeError('Page pathname must be an absolute path without query or fragment');
+  }
+  return value;
+}
+
 function sameDebuggerEndpoint(webSocketDebuggerUrl, cdp) {
   try {
     const parsed = new URL(webSocketDebuggerUrl);
@@ -54,11 +66,13 @@ function sameDebuggerEndpoint(webSocketDebuggerUrl, cdp) {
 function createTargetDiscovery({
   cdpUrl,
   pageOrigin,
+  pagePathname = '/',
   fetchImpl = fetch,
   maxDiscoveryBytes = 1_000_000,
 }) {
   const cdp = cdpOrigin(cdpUrl);
   const expectedPageOrigin = allowedPageOrigin(pageOrigin);
+  const expectedPagePathname = allowedPagePathname(pagePathname);
   if (!Number.isInteger(maxDiscoveryBytes) || maxDiscoveryBytes <= 0) {
     throw new TypeError('maxDiscoveryBytes must be a positive integer');
   }
@@ -106,7 +120,9 @@ function createTargetDiscovery({
         return false;
       }
       try {
-        return new URL(target.url).origin === expectedPageOrigin
+        const page = new URL(target.url);
+        return page.origin === expectedPageOrigin
+          && page.pathname === expectedPagePathname
           && sameDebuggerEndpoint(target.webSocketDebuggerUrl, cdp);
       } catch {
         return false;
@@ -122,8 +138,8 @@ function createTargetDiscovery({
     discover,
     cdpOrigin: cdp.origin,
     pageOrigin: expectedPageOrigin,
+    pagePathname: expectedPagePathname,
   });
 }
 
 module.exports = { createTargetDiscovery };
-

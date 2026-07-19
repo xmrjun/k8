@@ -32,6 +32,7 @@ test('gateway invokes the fixed JXA helper without a shell and decodes its JSON 
       'JavaScript',
       HELPER_PATH,
       'https://k81128.com',
+      '/',
       '({ status: "ready" })',
     ],
     options: {
@@ -41,6 +42,38 @@ test('gateway invokes the fixed JXA helper without a shell and decodes its JSON 
   }]);
   assert.equal(Object.hasOwn(calls[0].options, 'shell'), false);
 });
+
+test('gateway passes a separately validated pathname to the helper', async () => {
+  const calls = [];
+  const gateway = createAppleEventsGateway({
+    pageOrigin: 'https://sports.example.test:2053',
+    pagePathname: '/popup/',
+    async runImpl(_command, args) {
+      calls.push(args);
+      return { exitCode: 0, stdout: 'true' };
+    },
+  });
+
+  await gateway.evaluate('true');
+
+  assert.deepEqual(calls[0].slice(-3), [
+    'https://sports.example.test:2053',
+    '/popup/',
+    'true',
+  ]);
+});
+
+for (const pagePathname of ['popup/', '/popup/?token=private', '/popup/#tab']) {
+  test(`gateway rejects an unsafe page pathname: ${pagePathname}`, () => {
+    assert.throws(
+      () => createAppleEventsGateway({
+        pageOrigin: 'https://k81128.com',
+        pagePathname,
+      }),
+      /Page pathname must be an absolute path without query or fragment/,
+    );
+  });
+}
 
 for (const pageOrigin of [
   'http://k81128.com',

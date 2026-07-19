@@ -31,7 +31,7 @@ test('target discovery selects only an exact allow-listed page on the CDP endpoi
       calls.push({ url, options });
       return responseFor([
         target('https://k81128.com.evil.example/', 'ws://127.0.0.1:9223/devtools/page/evil'),
-        target('https://k81128.com/sports', 'ws://127.0.0.1:9223/devtools/page/allowed'),
+        target('https://k81128.com/', 'ws://127.0.0.1:9223/devtools/page/allowed'),
       ]);
     },
   });
@@ -41,6 +41,26 @@ test('target discovery selects only an exact allow-listed page on the CDP endpoi
   assert.equal(result.webSocketDebuggerUrl, 'ws://127.0.0.1:9223/devtools/page/allowed');
   assert.equal(calls[0].url, 'http://127.0.0.1:9223/json/list');
   assert.equal(calls[0].options.redirect, 'error');
+});
+
+test('target discovery separates same-origin pages by exact pathname', async () => {
+  const discovery = createTargetDiscovery({
+    cdpUrl: 'http://127.0.0.1:9223',
+    pageOrigin: 'https://sports.example.test:2053',
+    pagePathname: '/popup/',
+    async fetchImpl() {
+      return responseFor([
+        target('https://sports.example.test:2053/?token=private', 'ws://127.0.0.1:9223/devtools/page/main'),
+        target('https://sports.example.test:2053/popup/?token=private', 'ws://127.0.0.1:9223/devtools/page/popup'),
+      ]);
+    },
+  });
+
+  const result = await discovery.discover();
+
+  assert.equal(result.webSocketDebuggerUrl, 'ws://127.0.0.1:9223/devtools/page/popup');
+  assert.equal(discovery.pagePathname, '/popup/');
+  assert.equal(JSON.stringify(discovery).includes('token=private'), false);
 });
 
 test('target discovery rejects unsafe configuration before fetching', () => {
@@ -59,6 +79,20 @@ test('target discovery rejects unsafe configuration before fetching', () => {
     cdpUrl: 'http://127.0.0.1:9223',
     pageOrigin: 'https://k81128.com/path',
   }), /valid https origin/);
+
+  for (const pagePathname of [
+    'popup/',
+    '/popup/?token=private',
+    '/popup/#tab',
+    'https://sports.example.test/popup/',
+    '/popup\\records',
+  ]) {
+    assert.throws(() => createTargetDiscovery({
+      cdpUrl: 'http://127.0.0.1:9223',
+      pageOrigin: 'https://k81128.com',
+      pagePathname,
+    }), /Page pathname must be an absolute path without query or fragment/);
+  }
 });
 
 test('target discovery rejects a debugger URL on another host', async () => {
@@ -121,4 +155,3 @@ test('target discovery errors never retain private target details', async () => 
       && !JSON.stringify(error).includes(privateUrl)
   ));
 });
-

@@ -16,10 +16,11 @@ function helperRun(tabs) {
   return vm.runInNewContext(source, { Application });
 }
 
-function fakeTab(result) {
+function fakeTab(result, pathname = '/') {
   return {
     execute({ javascript }) {
       if (javascript === 'location.origin') return 'https://k81128.com';
+      if (javascript === 'location.pathname') return pathname;
       return JSON.stringify(result);
     },
   };
@@ -31,10 +32,32 @@ test('helper prefers a ready same-origin tab over a login page', () => {
     fakeTab({ status: 'ready', wallets: [{ currency: 'USDT' }] }),
   ]);
 
-  const serialized = run(['https://k81128.com', '({ status: "ready" })']);
+  const serialized = run(['https://k81128.com', '/', '({ status: "ready" })']);
 
   assert.deepEqual(JSON.parse(serialized), {
     status: 'ready',
     wallets: [{ currency: 'USDT' }],
   });
+});
+
+test('helper selects the exact pathname without reading the full URL', () => {
+  const executions = [];
+  const tab = (pathname, result) => ({
+    execute({ javascript }) {
+      executions.push(javascript);
+      if (javascript === 'location.origin') return 'https://k81128.com';
+      if (javascript === 'location.pathname') return pathname;
+      return JSON.stringify(result);
+    },
+  });
+  const run = helperRun([
+    tab('/', { status: 'ready', page: 'main' }),
+    tab('/popup/', { status: 'ready', page: 'popup' }),
+  ]);
+
+  const serialized = run(['https://k81128.com', '/popup/', '({ status: "ready" })']);
+
+  assert.equal(JSON.parse(serialized).page, 'popup');
+  assert.equal(executions.includes('location.href'), false);
+  assert.equal(executions.some((value) => value.includes('document.cookie')), false);
 });

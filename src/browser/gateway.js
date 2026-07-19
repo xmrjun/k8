@@ -14,6 +14,7 @@ function trustedError(error, fallbackCode, fallbackMessage) {
 function createBrowserGateway({
   cdpUrl,
   pageOrigin,
+  pagePathname = '/',
   fetchImpl = fetch,
   webSocketFactory,
   maxResponseBytes = 1_000_000,
@@ -29,6 +30,7 @@ function createBrowserGateway({
   const discovery = createTargetDiscovery({
     cdpUrl,
     pageOrigin,
+    pagePathname,
     fetchImpl,
     maxDiscoveryBytes,
   });

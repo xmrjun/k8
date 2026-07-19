@@ -67,17 +67,19 @@ function responseFor(value, status = 200) {
   });
 }
 
-test('gateway selects only an exact allow-listed page origin and evaluates by value', async () => {
+test('gateway selects only an exact allow-listed page path and evaluates by value', async () => {
   const fetchCalls = [];
   const sockets = [];
   const gateway = createBrowserGateway({
     cdpUrl: 'http://127.0.0.1:9223',
     pageOrigin: 'https://k81128.com',
+    pagePathname: '/popup/',
     async fetchImpl(url, options) {
       fetchCalls.push({ url, options });
       return responseFor([
         target('https://k81128.com.evil.example/sports', 'ws://127.0.0.1:9223/devtools/page/evil'),
-        target('https://k81128.com/sports', 'ws://127.0.0.1:9223/devtools/page/allowed'),
+        target('https://k81128.com/?token=private', 'ws://127.0.0.1:9223/devtools/page/main'),
+        target('https://k81128.com/popup/?token=private', 'ws://127.0.0.1:9223/devtools/page/allowed'),
       ]);
     },
     webSocketFactory(url) {
@@ -102,6 +104,16 @@ test('gateway selects only an exact allow-listed page origin and evaluates by va
       returnByValue: true,
     },
   });
+});
+
+test('gateway rejects unsafe page pathnames before discovery', () => {
+  for (const pagePathname of ['popup/', '/popup/?token=private', '/popup/#tab']) {
+    assert.throws(() => createBrowserGateway({
+      cdpUrl: 'http://127.0.0.1:9223',
+      pageOrigin: 'https://k81128.com',
+      pagePathname,
+    }), /Page pathname must be an absolute path without query or fragment/);
+  }
 });
 
 test('gateway rejects unsafe CDP origins before making a request', async () => {
@@ -136,7 +148,7 @@ test('gateway rejects remote debugger WebSocket URLs returned by target discover
     pageOrigin: 'https://k81128.com',
     async fetchImpl() {
       return responseFor([
-        target('https://k81128.com/sports', 'ws://attacker.example/devtools/page/allowed'),
+        target('https://k81128.com/', 'ws://attacker.example/devtools/page/allowed'),
       ]);
     },
   });
@@ -156,7 +168,7 @@ test('gateway reconnects on the next request after a disconnect', async () => {
     async fetchImpl() {
       fetchCount += 1;
       return responseFor([
-        target('https://k81128.com/sports', 'ws://127.0.0.1:9223/devtools/page/allowed'),
+        target('https://k81128.com/', 'ws://127.0.0.1:9223/devtools/page/allowed'),
       ]);
     },
     webSocketFactory(url) {
@@ -180,7 +192,7 @@ test('gateway status exposes only connection state', async () => {
     pageOrigin: 'https://k81128.com',
     async fetchImpl() {
       return responseFor([
-        target('https://k81128.com/sports', 'ws://127.0.0.1:9223/devtools/page/allowed'),
+        target('https://k81128.com/', 'ws://127.0.0.1:9223/devtools/page/allowed'),
       ]);
     },
     webSocketFactory(url) {
@@ -203,7 +215,7 @@ test('gateway caps evaluated response values', async () => {
     maxResponseBytes: 32,
     async fetchImpl() {
       return responseFor([
-        target('https://k81128.com/sports', 'ws://127.0.0.1:9223/devtools/page/allowed'),
+        target('https://k81128.com/', 'ws://127.0.0.1:9223/devtools/page/allowed'),
       ]);
     },
     webSocketFactory(url) {
