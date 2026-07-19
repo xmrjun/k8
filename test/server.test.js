@@ -18,6 +18,7 @@ test('createDisabledUpstream fails every query with a sanitized known error', as
   const upstream = createDisabledUpstream();
   for (const operation of [
     () => upstream.getSports(),
+    () => upstream.getSportsAccount(),
     () => upstream.getBalance(),
     () => upstream.getBets(),
   ]) {
@@ -52,6 +53,7 @@ test('CDP browser transport creates exact-origin gateways that share one queue',
   });
 
   assert.equal(typeof upstream.getSports, 'function');
+  assert.equal(typeof upstream.getSportsAccount, 'function');
   assert.deepEqual(gateways, [
     { cdpUrl: 'http://127.0.0.1:9223', pageOrigin: 'https://sports.example.test:2053' },
     { cdpUrl: 'http://127.0.0.1:9223', pageOrigin: 'https://k81128.com' },
@@ -91,6 +93,7 @@ test('Apple Events browser transport creates dual exact-origin gateways with no 
   });
 
   assert.equal(typeof upstream.getBalance, 'function');
+  assert.equal(typeof upstream.getSportsAccount, 'function');
   assert.deepEqual(appleGateways, [
     { pageOrigin: 'https://sports.example.test:2053' },
     { pageOrigin: 'https://k81128.com' },
@@ -104,6 +107,7 @@ test('server shutdown closes an injected upstream lifecycle', async () => {
   let closed = 0;
   const upstream = {
     async getSports() { return []; },
+    async getSportsAccount() { return {}; },
     async getBalance() { return {}; },
     async getBets() { return []; },
     async close() { closed += 1; },

@@ -1,6 +1,10 @@
 'use strict';
 
 const { buildSportsExpression, normalizeSportsPayload } = require('../browser/readers/sports');
+const {
+  buildSportsAccountExpression,
+  normalizeSportsAccountPayload,
+} = require('../browser/readers/sports-account');
 const { buildBalanceExpression, normalizeBalancePayload } = require('../browser/readers/balance');
 const { buildBetsExpression, normalizeBetsPayload } = require('../browser/readers/bets');
 const { CODES, UpstreamError, upstreamError } = require('./errors');
@@ -10,6 +14,11 @@ const KNOWN_CODES = new Set(Object.values(CODES));
 const sportsReader = Object.freeze({
   buildExpression: () => buildSportsExpression({ maxEvents: 500 }),
   normalize: normalizeSportsPayload,
+});
+
+const sportsAccountReader = Object.freeze({
+  buildExpression: buildSportsAccountExpression,
+  normalize: normalizeSportsAccountPayload,
 });
 
 const balanceReader = Object.freeze({
@@ -41,6 +50,7 @@ function createBrowserUpstream({
 
   const selectedReaders = {
     sports: readers.sports || sportsReader,
+    sportsAccount: readers.sportsAccount || sportsAccountReader,
     balance: readers.balance || balanceReader,
     bets: readers.bets || betsReader,
   };
@@ -65,6 +75,7 @@ function createBrowserUpstream({
       selectedReaders.sports,
       options,
     ),
+    getSportsAccount: () => perform(sportsGateway, selectedReaders.sportsAccount),
     getBalance: () => perform(accountGateway, selectedReaders.balance),
     getBets: (options = {}) => perform(accountGateway, selectedReaders.bets, options),
     async close() {

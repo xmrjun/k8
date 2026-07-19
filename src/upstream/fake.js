@@ -1,12 +1,23 @@
 'use strict';
 
-function createFakeUpstream({ sports = [], balance = {}, bets = [] } = {}) {
-  const calls = { sports: [], balance: [], bets: [] };
+function createFakeUpstream({
+  sports = [],
+  sportsAccount = {},
+  balance = {},
+  bets = [],
+} = {}) {
+  const calls = {
+    sports: [], sportsAccount: [], balance: [], bets: [],
+  };
   return {
     calls,
     async getSports(options = {}) {
       calls.sports.push(options);
       return sports;
+    },
+    async getSportsAccount() {
+      calls.sportsAccount.push({});
+      return sportsAccount;
     },
     async getBalance() {
       calls.balance.push({});

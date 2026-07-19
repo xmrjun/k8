@@ -122,6 +122,7 @@ git commit -m "feat: read IM Sports account summary"
 - Modify: `src/server.js`
 - Modify: `test/browser-upstream.test.js`
 - Modify: `test/server.test.js`
+- Modify: `test/upstream-client.test.js`
 
 **Step 1: Write failing upstream tests**
 
@@ -135,7 +136,7 @@ uses only `sportsGateway`, uses the new reader, shares the existing serialized q
 
 **Step 2: Run tests to verify RED**
 
-Run: `node --test test/browser-upstream.test.js test/server.test.js`
+Run: `node --test test/browser-upstream.test.js test/server.test.js test/upstream-client.test.js`
 
 Expected: FAIL because `getSportsAccount` is missing.
 
@@ -151,14 +152,14 @@ Add the same method to fake and disabled adapters so every upstream implementati
 
 **Step 4: Run tests to verify GREEN**
 
-Run: `node --test test/browser-upstream.test.js test/server.test.js`
+Run: `node --test test/browser-upstream.test.js test/server.test.js test/upstream-client.test.js`
 
 Expected: all focused upstream tests pass.
 
 **Step 5: Commit**
 
 ```bash
-git add src/upstream/browser.js src/upstream/fake.js src/server.js test/browser-upstream.test.js test/server.test.js
+git add src/upstream/browser.js src/upstream/fake.js src/server.js test/browser-upstream.test.js test/server.test.js test/upstream-client.test.js docs/plans/2026-07-19-im-sports-account-implementation.md
 git commit -m "feat: expose IM Sports account upstream"
 ```
 

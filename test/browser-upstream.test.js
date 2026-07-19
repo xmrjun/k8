@@ -36,6 +36,7 @@ test('sports reads use only the sports gateway and preserve query options', asyn
     queue: createOperationQueue(),
     readers: {
       sports: reader('sports-reader'),
+      sportsAccount: reader('sports-account-reader'),
       balance: reader('balance-reader'),
       bets: reader('bets-reader'),
     },
@@ -53,6 +54,31 @@ test('sports reads use only the sports gateway and preserve query options', asyn
   assert.equal(calls[0].options.signal instanceof AbortSignal, true);
 });
 
+test('sports account reads use only the sports gateway', async () => {
+  const calls = [];
+  const upstream = createBrowserUpstream({
+    sportsGateway: gateway('sports', calls),
+    accountGateway: gateway('account', calls),
+    queue: createOperationQueue(),
+    readers: {
+      sports: reader('sports-reader'),
+      sportsAccount: reader('sports-account-reader'),
+      balance: reader('balance-reader'),
+      bets: reader('bets-reader'),
+    },
+  });
+
+  const result = await upstream.getSportsAccount();
+
+  assert.deepEqual(result, {
+    name: 'sports-account-reader',
+    value: { from: 'sports' },
+    options: undefined,
+  });
+  assert.deepEqual(calls.map((call) => call.name), ['sports']);
+  assert.match(calls[0].expression, /sports-account-reader/);
+});
+
 test('balance and bet reads use only the account gateway', async () => {
   const calls = [];
   const upstream = createBrowserUpstream({
@@ -61,6 +87,7 @@ test('balance and bet reads use only the account gateway', async () => {
     queue: createOperationQueue(),
     readers: {
       sports: reader('sports-reader'),
+      sportsAccount: reader('sports-account-reader'),
       balance: reader('balance-reader'),
       bets: reader('bets-reader'),
     },
@@ -92,12 +119,18 @@ test('sports and account browser operations share one serial queue', async () =>
     queue: createOperationQueue(),
     readers: {
       sports: reader('sports-reader'),
+      sportsAccount: reader('sports-account-reader'),
       balance: reader('balance-reader'),
       bets: reader('bets-reader'),
     },
   });
 
-  await Promise.all([upstream.getSports(), upstream.getBalance(), upstream.getBets()]);
+  await Promise.all([
+    upstream.getSports(),
+    upstream.getSportsAccount(),
+    upstream.getBalance(),
+    upstream.getBets(),
+  ]);
 
   assert.equal(maximumActive, 1);
 });

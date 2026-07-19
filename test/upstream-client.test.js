@@ -153,9 +153,15 @@ for (const [boundary, overrides] of [
   });
 }
 
-test('fake adapter implements the three-method contract', async () => {
-  const fake = createFakeUpstream({ sports: ['sport'], balance: { total: 1 }, bets: ['bet'] });
+test('fake adapter implements the browser upstream contract', async () => {
+  const fake = createFakeUpstream({
+    sports: ['sport'],
+    sportsAccount: { currency: 'USD' },
+    balance: { total: 1 },
+    bets: ['bet'],
+  });
   assert.deepEqual(await fake.getSports(), ['sport']);
+  assert.deepEqual(await fake.getSportsAccount(), { currency: 'USD' });
   assert.deepEqual(await fake.getBalance(), { total: 1 });
   assert.deepEqual(await fake.getBets({ limit: 1, cursor: 'next' }), ['bet']);
   assert.deepEqual(fake.calls.bets, [{ limit: 1, cursor: 'next' }]);
