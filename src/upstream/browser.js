@@ -54,6 +54,7 @@ function createBrowserUpstream({
     balance: readers.balance || balanceReader,
     bets: readers.bets || betsReader,
   };
+  let closePromise;
 
   async function perform(gateway, reader, options) {
     try {
@@ -78,9 +79,14 @@ function createBrowserUpstream({
     getSportsAccount: () => perform(sportsGateway, selectedReaders.sportsAccount),
     getBalance: () => perform(accountGateway, selectedReaders.balance),
     getBets: (options = {}) => perform(accountGateway, selectedReaders.bets, options),
-    async close() {
-      await sportsGateway.close();
-      await accountGateway.close();
+    close() {
+      if (!closePromise) {
+        closePromise = (async () => {
+          await sportsGateway.close();
+          await accountGateway.close();
+        })();
+      }
+      return closePromise;
     },
   });
 }

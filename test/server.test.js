@@ -7,12 +7,54 @@ const {
   createDisabledUpstream,
 } = require('../src/server');
 const { CODES } = require('../src/upstream/errors');
+const { WebSocket } = require('ws');
 
 const config = {
   apiToken: 'server-test-token-that-is-at-least-32-characters',
   sportsCacheMs: 5000,
   upstreamMode: 'disabled',
 };
+
+const browserConfig = {
+  ...config,
+  wsToken: 'server-websocket-token-that-is-at-least-32-characters',
+  upstreamMode: 'browser',
+  browserTransport: 'cdp',
+  browserCdpUrl: 'http://127.0.0.1:9223',
+  browserPageOrigin: 'https://k81128.com',
+  browserSportsOrigin: 'https://sports.example.test:2053',
+  browserOperationTimeoutMs: 1234,
+};
+
+function injectedBrowserUpstream(calls = []) {
+  return {
+    async getSports() { return []; },
+    async getSportsAccount() { return {}; },
+    async getBalance() { return {}; },
+    async getBets() { return []; },
+    async close() { calls.push('upstream.close'); },
+  };
+}
+
+async function listen(server) {
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  return server.address().port;
+}
+
+function rejectedUpgrade(url) {
+  return new Promise((resolve, reject) => {
+    const client = new WebSocket(url);
+    client.once('unexpected-response', (_request, response) => {
+      response.resume();
+      resolve(response.statusCode);
+    });
+    client.once('open', () => reject(new Error('unexpected connection')));
+    client.once('error', () => {});
+  });
+}
 
 test('createDisabledUpstream fails every query with a sanitized known error', async () => {
   const upstream = createDisabledUpstream();
@@ -31,15 +73,6 @@ test('createDisabledUpstream fails every query with a sanitized known error', as
 test('CDP browser transport creates exact-origin gateways that share one queue', () => {
   const gateways = [];
   const queues = [];
-  const browserConfig = {
-    ...config,
-    upstreamMode: 'browser',
-    browserTransport: 'cdp',
-    browserCdpUrl: 'http://127.0.0.1:9223',
-    browserPageOrigin: 'https://k81128.com',
-    browserSportsOrigin: 'https://sports.example.test:2053',
-    browserOperationTimeoutMs: 1234,
-  };
   const upstream = createConfiguredUpstream(browserConfig, {
     cdpGatewayFactory(options) {
       gateways.push(options);
@@ -123,6 +156,119 @@ test('server shutdown closes an injected upstream lifecycle', async () => {
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(closed, 1);
+});
+
+test('CDP server composes and starts one realtime monitor without delaying listen', async () => {
+  const calls = [];
+  const feed = {
+    ingest(value) { calls.push(['feed.ingest', value]); return { needsResync: false }; },
+    invalidate() { calls.push(['feed.invalidate']); },
+    snapshot() { return null; },
+    isStale() { return true; },
+    subscribe() { return () => {}; },
+    nextSequence() { return 1; },
+  };
+  let monitorOptions;
+  let wsOptions;
+  let releaseStart;
+  const startPending = new Promise((resolve) => { releaseStart = resolve; });
+  const server = createHttpServer(browserConfig, injectedBrowserUpstream(calls), {
+    feedFactory(options) {
+      calls.push(['feed.create', options]);
+      return feed;
+    },
+    monitorFactory(options) {
+      monitorOptions = options;
+      return {
+        async start() { calls.push('monitor.start'); await startPending; },
+        async stop() { calls.push('monitor.stop'); },
+      };
+    },
+    wsFeedFactory(options) {
+      wsOptions = options;
+      return { async close() { calls.push('ws.close'); } };
+    },
+  });
+
+  await listen(server);
+  assert.equal(calls.includes('monitor.start'), true);
+  assert.equal(wsOptions.server, server);
+  assert.equal(wsOptions.feed, feed);
+  assert.equal(wsOptions.token, browserConfig.wsToken);
+  assert.equal(monitorOptions.cdpUrl, browserConfig.browserCdpUrl);
+  assert.equal(monitorOptions.pageOrigin, browserConfig.browserSportsOrigin);
+  assert.deepEqual(monitorOptions.onResponse('decoded'), { needsResync: false });
+  monitorOptions.onDisconnect();
+  assert.deepEqual(calls.slice(-2), [
+    ['feed.ingest', 'decoded'],
+    ['feed.invalidate'],
+  ]);
+
+  releaseStart();
+  await new Promise((resolve, reject) => server.close((error) => (
+    error ? reject(error) : resolve()
+  )));
+  await server.waitForShutdown();
+  assert.deepEqual(calls.slice(-3), ['monitor.stop', 'ws.close', 'upstream.close']);
+});
+
+test('Apple Events rollback mode never starts realtime and returns 503 on upgrade', async () => {
+  const rollbackConfig = { ...browserConfig, browserTransport: 'apple_events' };
+  let monitorCreated = 0;
+  let wsCreated = 0;
+  const server = createHttpServer(rollbackConfig, injectedBrowserUpstream(), {
+    monitorFactory() { monitorCreated += 1; },
+    wsFeedFactory() { wsCreated += 1; },
+  });
+  const port = await listen(server);
+
+  assert.equal(
+    await rejectedUpgrade(`ws://127.0.0.1:${port}/ws/sports?token=anything`),
+    503,
+  );
+  assert.equal(monitorCreated, 0);
+  assert.equal(wsCreated, 0);
+
+  await new Promise((resolve, reject) => server.close((error) => (
+    error ? reject(error) : resolve()
+  )));
+  await server.waitForShutdown();
+});
+
+test('monitor startup failure preserves health but leaves realtime unavailable', async () => {
+  const feed = {
+    invalidated: 0,
+    ingest() { return { needsResync: false }; },
+    invalidate() { this.invalidated += 1; },
+    snapshot() { return null; },
+    isStale() { return true; },
+    subscribe() { return () => {}; },
+    nextSequence() { return 1; },
+  };
+  const server = createHttpServer(browserConfig, injectedBrowserUpstream(), {
+    feedFactory: () => feed,
+    monitorFactory: () => ({
+      async start() { throw new Error('private startup detail'); },
+      async stop() {},
+    }),
+  });
+  const port = await listen(server);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const health = await fetch(`http://127.0.0.1:${port}/health`);
+  assert.equal(health.status, 200);
+  assert.equal(feed.invalidated, 1);
+  assert.equal(
+    await rejectedUpgrade(
+      `ws://127.0.0.1:${port}/ws/sports?token=${browserConfig.wsToken}`,
+    ),
+    503,
+  );
+
+  await new Promise((resolve, reject) => server.close((error) => (
+    error ? reject(error) : resolve()
+  )));
+  await server.waitForShutdown();
 });
 
 test('createHttpServer serves health while production upstream remains disabled', async () => {

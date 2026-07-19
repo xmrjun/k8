@@ -205,7 +205,7 @@ test('sports failure never falls back to the account page', async () => {
   assert.equal(accountCalls, 0);
 });
 
-test('close releases both browser gateways', async () => {
+test('close releases both browser gateways exactly once', async () => {
   const calls = [];
   const upstream = createBrowserUpstream({
     sportsGateway: gateway('sports', calls),
@@ -214,6 +214,7 @@ test('close releases both browser gateways', async () => {
     readers: { sports: reader('sports-reader') },
   });
 
+  await upstream.close();
   await upstream.close();
 
   assert.deepEqual(calls, [
