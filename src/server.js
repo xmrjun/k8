@@ -3,7 +3,10 @@
 const http = require('node:http');
 
 const { createApp } = require('./app');
+const { createBrowserGateway } = require('./browser/gateway');
+const { createOperationQueue } = require('./browser/operation-queue');
 const { loadConfig } = require('./config');
+const { createBrowserUpstream } = require('./upstream/browser');
 const { CODES, upstreamError } = require('./upstream/errors');
 
 function createDisabledUpstream() {
@@ -14,15 +17,39 @@ function createDisabledUpstream() {
     getSports: unavailable,
     getBalance: unavailable,
     getBets: unavailable,
+    async close() {},
   });
 }
 
-function createHttpServer(config, upstream = createDisabledUpstream()) {
-  return http.createServer(createApp({
+function createConfiguredUpstream(config, {
+  gatewayFactory = createBrowserGateway,
+  queueFactory = createOperationQueue,
+} = {}) {
+  if (config.upstreamMode !== 'browser') return createDisabledUpstream();
+
+  const queue = queueFactory({ timeoutMs: config.browserOperationTimeoutMs });
+  const sportsGateway = gatewayFactory({
+    cdpUrl: config.browserCdpUrl,
+    pageOrigin: config.browserSportsOrigin,
+  });
+  const accountGateway = gatewayFactory({
+    cdpUrl: config.browserCdpUrl,
+    pageOrigin: config.browserPageOrigin,
+  });
+  return createBrowserUpstream({ sportsGateway, accountGateway, queue });
+}
+
+function createHttpServer(config, injectedUpstream) {
+  const upstream = injectedUpstream || createConfiguredUpstream(config);
+  const server = http.createServer(createApp({
     apiToken: config.apiToken,
     sportsCacheMs: config.sportsCacheMs,
     upstream,
   }));
+  server.once('close', () => {
+    Promise.resolve(upstream.close?.()).catch(() => {});
+  });
+  return server;
 }
 
 function main() {
@@ -39,4 +66,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { createDisabledUpstream, createHttpServer };
+module.exports = { createConfiguredUpstream, createDisabledUpstream, createHttpServer };
