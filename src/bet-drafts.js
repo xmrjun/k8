@@ -121,21 +121,29 @@ function normalizeDraftInput(input) {
     invalidInput();
   }
 
-  if (ALLOWED_FIELDS.some((field) => typeof input[field] !== 'string')) invalidInput();
-  if (!ALLOWED_SCOPES.has(input.scope) || !ALLOWED_SPORTS.has(input.sport)) invalidInput();
-  if (!/^\d{1,32}$/.test(input.event_id)) invalidInput();
-  if (input.selection_key.length === 0 || input.selection_key.length > 500) invalidInput();
-  if (input.idempotency_key.length === 0 || input.idempotency_key.length > 200) invalidInput();
+  const descriptors = Object.getOwnPropertyDescriptors(input);
+  if (ALLOWED_FIELDS.some((field) => !Object.hasOwn(descriptors[field], 'value')
+    || typeof descriptors[field].value !== 'string')) {
+    invalidInput();
+  }
+  const values = Object.fromEntries(
+    ALLOWED_FIELDS.map((field) => [field, descriptors[field].value]),
+  );
+
+  if (!ALLOWED_SCOPES.has(values.scope) || !ALLOWED_SPORTS.has(values.sport)) invalidInput();
+  if (!/^\d{1,32}$/.test(values.event_id)) invalidInput();
+  if (values.selection_key.length === 0 || values.selection_key.length > 500) invalidInput();
+  if (values.idempotency_key.length === 0 || values.idempotency_key.length > 200) invalidInput();
 
   return {
-    scope: input.scope,
-    sport: input.sport,
-    event_id: input.event_id,
-    selection_key: input.selection_key,
-    stake: normalizeStake(input.stake),
-    expected_odds: requireDecimal(input.expected_odds, { positive: true }),
-    max_odds_drift: requireDecimal(input.max_odds_drift),
-    idempotency_key: input.idempotency_key,
+    scope: values.scope,
+    sport: values.sport,
+    event_id: values.event_id,
+    selection_key: values.selection_key,
+    stake: normalizeStake(values.stake),
+    expected_odds: requireDecimal(values.expected_odds, { positive: true }),
+    max_odds_drift: requireDecimal(values.max_odds_drift),
+    idempotency_key: values.idempotency_key,
   };
 }
 

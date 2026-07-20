@@ -148,6 +148,37 @@ for (const [name, input] of [
   test(`rejects ${name} input`, () => assertInvalid(input));
 }
 
+test('rejects an accessor that changes after its values pass validation', () => {
+  const input = validInput();
+  let reads = 0;
+  Object.defineProperty(input, 'scope', {
+    enumerable: true,
+    configurable: true,
+    get() {
+      reads += 1;
+      return reads < 3 ? 'live' : 'tomorrow';
+    },
+  });
+
+  assertInvalid(input);
+});
+
+test('rejects an accessor without invoking a throwing getter', () => {
+  const input = validInput();
+  let getterCalled = false;
+  Object.defineProperty(input, 'stake', {
+    enumerable: true,
+    configurable: true,
+    get() {
+      getterCalled = true;
+      throw new Error('getter must not execute');
+    },
+  });
+
+  assertInvalid(input);
+  assert.equal(getterCalled, false);
+});
+
 for (const [actual, expected, maximumDrift, exceeds] of [
   ['1.9500', '1.95', '0', false],
   ['2.00', '1.95', '0.0500', false],
