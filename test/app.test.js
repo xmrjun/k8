@@ -66,7 +66,12 @@ test('GET /health succeeds without authentication', async () => {
 
 test('protected API routes reject a missing bearer token', async () => {
   await withServer({ upstream: createFakeUpstream() }, async (baseUrl) => {
-    for (const path of ['/api/sports', '/api/sports/account']) {
+    for (const path of [
+      '/api/sports',
+      '/api/sports/account',
+      '/api/sports/catalog',
+      '/api/sports/boosts',
+    ]) {
       const response = await request(baseUrl, path);
       assert.equal(response.status, 401);
       assert.equal(response.body.error.code, 'UNAUTHORIZED');
@@ -176,6 +181,53 @@ test('GET /api/sports/account preserves sanitized upstream error mapping', async
     assert.equal(JSON.stringify(response.body).includes(secret), false);
   });
 });
+
+test('GET /api/sports/catalog returns the uncached visible navigation catalog', async () => {
+  const catalog = {
+    scopes: ['live', 'today', 'early'],
+    tabs: ['today', 'early', 'parlay'],
+    live_sports: [],
+    all_sports: [],
+    popular_tournaments: [],
+    odds_boost_sports: [],
+  };
+  const upstream = createFakeUpstream({ sportsCatalog: catalog });
+  await withServer({ upstream }, async (baseUrl) => {
+    const first = await request(baseUrl, '/api/sports/catalog', authorized());
+    const second = await request(baseUrl, '/api/sports/catalog', authorized());
+    assert.equal(first.status, 200);
+    assert.deepEqual(first.body.data, catalog);
+    assert.equal(second.status, 200);
+  });
+  assert.equal(upstream.calls.sportsCatalog.length, 2);
+});
+
+test('GET /api/sports/boosts returns uncached visible read-only offers', async () => {
+  const boosts = { offers: [], count: 0, truncated: false };
+  const upstream = createFakeUpstream({ sportsBoosts: boosts });
+  await withServer({ upstream }, async (baseUrl) => {
+    const response = await request(baseUrl, '/api/sports/boosts', authorized());
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body.data, boosts);
+  });
+  assert.equal(upstream.calls.sportsBoosts.length, 1);
+});
+
+for (const path of [
+  '/api/sports/catalog?extra=value',
+  '/api/sports/boosts?scope=live',
+]) {
+  test(`GET ${path} rejects query parameters`, async () => {
+    const upstream = createFakeUpstream();
+    await withServer({ upstream }, async (baseUrl) => {
+      const response = await request(baseUrl, path, authorized());
+      assert.equal(response.status, 400);
+      assert.equal(response.body.error.code, 'INVALID_REQUEST');
+    });
+    assert.equal(upstream.calls.sportsCatalog.length, 0);
+    assert.equal(upstream.calls.sportsBoosts.length, 0);
+  });
+}
 
 for (const query of [
   '',

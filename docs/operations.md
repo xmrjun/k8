@@ -41,11 +41,17 @@ HTTP 接口继续使用独立的 `API_TOKEN`。实时接口是：
 
 ```text
 GET /api/sports?scope=live|today|early&sport=football|basketball|tennis
+GET /api/sports/catalog
+GET /api/sports/boosts
 ```
 
 `scope` 和 `sport` 都必须提供。HTTP 读取会在专用 Chrome 中自动选择对应的范围和
 体育项目；滚球、今日、早盘各自使用自己的体育项目列表。某个范围当前没有该项目时
 返回空赛事列表，不会读取另一个范围的数据。
+
+`/api/sports/catalog` 和 `/api/sports/boosts` 不接受查询参数且不缓存。前者读取热门
+锦标赛、串关标签和其他体育项目目录；后者读取可见赔率增值卡片。两者都不提供下注、
+确认、兑现或资金写入能力。
 
 实时接口是：
 

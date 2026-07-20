@@ -9,7 +9,7 @@
     "smoke": "node --env-file=.env.local scripts/smoke-test.mjs",
     "smoke:ws": "node --env-file=.env.local scripts/ws-smoke-test.mjs",
     "start": "node --env-file=.env.local src/server.js",
-    "check": "node --check src/server.js && node --check src/realtime/im-protocol.js && node --check src/realtime/feed-state.js && node --check src/realtime/im-network-monitor.js && node --check src/realtime/ws-feed-server.js && node --check scripts/ws-smoke-test.mjs && node --check src/browser/apple-events-gateway.js && /usr/bin/osacompile -l JavaScript -o /dev/null scripts/chrome-evaluate.jxa",
+    "check": "node --check src/server.js && node --check src/browser/readers/sports-catalog.js && node --check src/browser/readers/sports-boosts.js && node --check src/realtime/im-protocol.js && node --check src/realtime/feed-state.js && node --check src/realtime/im-network-monitor.js && node --check src/realtime/ws-feed-server.js && node --check scripts/ws-smoke-test.mjs && node --check src/browser/apple-events-gateway.js && /usr/bin/osacompile -l JavaScript -o /dev/null scripts/chrome-evaluate.jxa",
     "test": "node --test test/*.test.js"
   },
   "engines": {

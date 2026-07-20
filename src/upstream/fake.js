@@ -3,11 +3,14 @@
 function createFakeUpstream({
   sports = [],
   sportsAccount = {},
+  sportsCatalog = {},
+  sportsBoosts = {},
   balance = {},
   bets = [],
 } = {}) {
   const calls = {
-    sports: [], sportsAccount: [], balance: [], bets: [],
+    sports: [], sportsAccount: [], sportsCatalog: [], sportsBoosts: [],
+    balance: [], bets: [],
   };
   return {
     calls,
@@ -18,6 +21,14 @@ function createFakeUpstream({
     async getSportsAccount() {
       calls.sportsAccount.push({});
       return sportsAccount;
+    },
+    async getSportsCatalog() {
+      calls.sportsCatalog.push({});
+      return sportsCatalog;
+    },
+    async getSportsBoosts() {
+      calls.sportsBoosts.push({});
+      return sportsBoosts;
     },
     async getBalance() {
       calls.balance.push({});

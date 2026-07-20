@@ -9,6 +9,14 @@ const {
   buildSportsAccountExpression,
   normalizeSportsAccountPayload,
 } = require('../browser/readers/sports-account');
+const {
+  buildSportsCatalogExpression,
+  normalizeSportsCatalogPayload,
+} = require('../browser/readers/sports-catalog');
+const {
+  buildSportsBoostsExpression,
+  normalizeSportsBoostsPayload,
+} = require('../browser/readers/sports-boosts');
 const { buildBalanceExpression, normalizeBalancePayload } = require('../browser/readers/balance');
 const { buildBetsExpression, normalizeBetsPayload } = require('../browser/readers/bets');
 const { CODES, UpstreamError, upstreamError } = require('./errors');
@@ -28,6 +36,16 @@ const sportsSelectionReader = Object.freeze({
 const sportsAccountReader = Object.freeze({
   buildExpression: buildSportsAccountExpression,
   normalize: normalizeSportsAccountPayload,
+});
+
+const sportsCatalogReader = Object.freeze({
+  buildExpression: buildSportsCatalogExpression,
+  normalize: normalizeSportsCatalogPayload,
+});
+
+const sportsBoostsReader = Object.freeze({
+  buildExpression: () => buildSportsBoostsExpression({ maxOffers: 50 }),
+  normalize: normalizeSportsBoostsPayload,
 });
 
 const balanceReader = Object.freeze({
@@ -66,6 +84,8 @@ function createBrowserUpstream({
     sportsSelection: readers.sportsSelection || sportsSelectionReader,
     sports: readers.sports || sportsReader,
     sportsAccount: readers.sportsAccount || sportsAccountReader,
+    sportsCatalog: readers.sportsCatalog || sportsCatalogReader,
+    sportsBoosts: readers.sportsBoosts || sportsBoostsReader,
     balance: readers.balance || balanceReader,
     bets: readers.bets || betsReader,
   };
@@ -115,6 +135,8 @@ function createBrowserUpstream({
   return Object.freeze({
     getSports,
     getSportsAccount: () => perform(sportsGateway, selectedReaders.sportsAccount),
+    getSportsCatalog: () => perform(sportsGateway, selectedReaders.sportsCatalog),
+    getSportsBoosts: () => perform(sportsGateway, selectedReaders.sportsBoosts),
     getBalance: () => perform(accountGateway, selectedReaders.balance),
     getBets: (options = {}) => perform(betsGateway, selectedReaders.bets, options),
     close() {

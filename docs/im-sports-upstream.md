@@ -51,6 +51,25 @@ is limited to exact scope tabs and sport filters. It does not click odds, bet sl
 cash-out, confirmations, record rows, or funds controls; issue page requests;
 inspect request headers; or access browser storage.
 
+## Catalog and odds-boost structure
+
+The navigation catalog is read from four exact containers:
+
+- `#leftpanel_live`
+- `#leftpanel_popular_tournament`
+- `#leftpanel_all_sports`
+- `#leftpanel_oddsboost`
+
+It reports bounded visible counts, the exact `今日`/`早盘`/`串关` tabs, popular
+tournament names, and allow-listed sport labels. Catalog support does not imply an
+event parser exists for that sport.
+
+Odds-boost cards are bounded to 50 `.ob_card` elements. The reader uses
+`.ob_pap_label`, `.ob_bet_placed`, `.ob_pap`, `.odds.ob_odds.old`, and
+`.odds.ob_odds.new` and returns no link or action identifier. Cards are normalized
+as `event_parlay` or `chain_parlay`; an absent boosted value is retained as an
+unavailable card instead of being exposed as an actionable selection.
+
 ## Verified account-summary structure
 
 The 2026-07-19 read-only inspection also established the IM Sports account panel contract:

@@ -20,6 +20,8 @@ function createDisabledUpstream() {
   return Object.freeze({
     getSports: unavailable,
     getSportsAccount: unavailable,
+    getSportsCatalog: unavailable,
+    getSportsBoosts: unavailable,
     getBalance: unavailable,
     getBets: unavailable,
     async close() {},

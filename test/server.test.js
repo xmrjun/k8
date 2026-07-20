@@ -30,6 +30,8 @@ function injectedBrowserUpstream(calls = []) {
   return {
     async getSports() { return []; },
     async getSportsAccount() { return {}; },
+    async getSportsCatalog() { return {}; },
+    async getSportsBoosts() { return {}; },
     async getBalance() { return {}; },
     async getBets() { return []; },
     async close() { calls.push('upstream.close'); },
@@ -61,6 +63,8 @@ test('createDisabledUpstream fails every query with a sanitized known error', as
   for (const operation of [
     () => upstream.getSports(),
     () => upstream.getSportsAccount(),
+    () => upstream.getSportsCatalog(),
+    () => upstream.getSportsBoosts(),
     () => upstream.getBalance(),
     () => upstream.getBets(),
   ]) {
@@ -87,6 +91,8 @@ test('CDP browser transport creates exact-origin gateways that share one queue',
 
   assert.equal(typeof upstream.getSports, 'function');
   assert.equal(typeof upstream.getSportsAccount, 'function');
+  assert.equal(typeof upstream.getSportsCatalog, 'function');
+  assert.equal(typeof upstream.getSportsBoosts, 'function');
   assert.deepEqual(gateways, [
     { cdpUrl: 'http://127.0.0.1:9223', pageOrigin: 'https://sports.example.test:2053', pagePathname: '/' },
     { cdpUrl: 'http://127.0.0.1:9223', pageOrigin: 'https://k81128.com', pagePathname: '/' },
@@ -128,6 +134,8 @@ test('Apple Events browser transport creates exact-purpose gateways with no CDP 
 
   assert.equal(typeof upstream.getBalance, 'function');
   assert.equal(typeof upstream.getSportsAccount, 'function');
+  assert.equal(typeof upstream.getSportsCatalog, 'function');
+  assert.equal(typeof upstream.getSportsBoosts, 'function');
   assert.deepEqual(appleGateways, [
     { pageOrigin: 'https://sports.example.test:2053', pagePathname: '/' },
     { pageOrigin: 'https://k81128.com', pagePathname: '/' },
@@ -143,6 +151,8 @@ test('server shutdown closes an injected upstream lifecycle', async () => {
   const upstream = {
     async getSports() { return []; },
     async getSportsAccount() { return {}; },
+    async getSportsCatalog() { return {}; },
+    async getSportsBoosts() { return {}; },
     async getBalance() { return {}; },
     async getBets() { return []; },
     async close() { closed += 1; },

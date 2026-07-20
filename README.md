@@ -22,6 +22,8 @@ Cloudflare 只转发 `127.0.0.1:8788`。Chrome 调试端口 `9223` 必须始终�
 | --- | --- | --- |
 | `GET /health` | 可用 | 无需鉴权的进程健康检查 |
 | `GET /api/sports?scope=…&sport=…` | 可用 | 按范围和体育项目读取赛事、市场与赔率快照 |
+| `GET /api/sports/catalog` | 可用 | 热门锦标赛、串关标签及完整体育项目目录 |
+| `GET /api/sports/boosts` | 可用 | 赔率增值与可见组合卡片，只读且不提供下注动作 |
 | `GET /api/sports/account` | 可用 | IM 体育余额与未结算金额，不缓存 |
 | `GET /api/balance` | 可用 | 主账户钱包；要求对应账户页面保持登录 |
 | `WS /ws/sports` | 可用 | IM 体育实时快照、赔率增量、比分和心跳 |
@@ -238,6 +240,50 @@ curl \
 - `decimal_odds` 是十进制赔率，`display_odds` 保留页面显示值，`available=false` 表示锁盘或暂不可用。
 - WebSocket 实时推送当前仍只发布经过验证的 `live + football`；不要把 HTTP 快照能力误认为对应的实时推送已经完成。
 
+### 热门、锦标赛、串关与赔率增值
+
+读取当前导航目录：
+
+```bash
+curl \
+  -H "Authorization: Bearer $API_TOKEN" \
+  "http://127.0.0.1:8788/api/sports/catalog"
+```
+
+目录返回 `scopes`、`tabs`、`live_sports`、`all_sports`、
+`popular_tournaments` 和 `odds_boost_sports`。当前可识别的目录项目包括：
+
+```text
+football              足球
+electronic_football   电子足球
+basketball            篮球
+electronic_basketball 电子篮球
+esports               电竞体育
+tennis                网球
+fantasy_marble        魔幻弹珠
+table_tennis          乒乓球
+volleyball            排球
+baseball              棒球
+virtual_sports        虚拟体育
+combat_sports         拳击 / 综合格斗
+snooker_billiards     斯诺克/ 台球
+```
+
+目录中出现某个项目只表示页面导航已经识别，不代表其赛事和市场结构已经开放。
+`GET /api/sports` 目前仍只接受足球、篮球和网球。
+
+读取赔率增值卡片：
+
+```bash
+curl \
+  -H "Authorization: Bearer $API_TOKEN" \
+  "http://127.0.0.1:8788/api/sports/boosts"
+```
+
+卡片类型为 `event_parlay`（赛事串关）或 `chain_parlay`（连串过关），返回可见
+组合说明、参与人数、原赔率、增值赔率和可用性。响应不包含下注动作、控制 URL、
+确认或兑现能力。
+
 读取 IM 体育账户摘要：
 
 ```bash
@@ -311,6 +357,7 @@ K8_WS_BASE_URL=wss://<你的 API 域名> npm run smoke:ws
 - 浏览器调试端口只允许 `127.0.0.1` 或 `::1`。
 - Cloudflare Tunnel 只连接 API 端口，不连接 Chrome 调试端口。
 - 第一版不提供下注、兑现、确认或资金操作。
+- 赔率增值和串关端点只是只读展示；项目不提供自动下注、确认下注或兑现接口。
 - 自动化测试只使用合成数据，不保存真实账户记录。
 
 ## 文档

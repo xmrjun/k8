@@ -124,6 +124,26 @@ test('sports account reads use only the sports gateway', async () => {
   assert.match(calls[0].expression, /sports-account-reader/);
 });
 
+test('sports catalog and odds boosts use only the sports gateway', async () => {
+  const calls = [];
+  const upstream = createBrowserUpstream({
+    sportsGateway: gateway('sports', calls),
+    accountGateway: gateway('account', calls),
+    betsGateway: gateway('bets', calls),
+    queue: createOperationQueue(),
+    readers: {
+      sportsCatalog: reader('sports-catalog-reader'),
+      sportsBoosts: reader('sports-boosts-reader'),
+    },
+  });
+
+  assert.equal((await upstream.getSportsCatalog()).name, 'sports-catalog-reader');
+  assert.equal((await upstream.getSportsBoosts()).name, 'sports-boosts-reader');
+  assert.deepEqual(calls.map((call) => call.name), ['sports', 'sports']);
+  assert.match(calls[0].expression, /sports-catalog-reader/);
+  assert.match(calls[1].expression, /sports-boosts-reader/);
+});
+
 test('balance and bet reads use separate exact-purpose gateways', async () => {
   const calls = [];
   const upstream = createBrowserUpstream({

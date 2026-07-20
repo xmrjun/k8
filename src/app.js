@@ -117,6 +117,8 @@ function createApp({
     const routes = new Set([
       '/api/sports',
       '/api/sports/account',
+      '/api/sports/catalog',
+      '/api/sports/boosts',
       '/api/balance',
       '/api/bets',
     ]);
@@ -131,6 +133,24 @@ function createApp({
     }
 
     try {
+      if (url.pathname === '/api/sports/catalog'
+        || url.pathname === '/api/sports/boosts') {
+        if (Array.from(url.searchParams.keys()).length > 0) {
+          sendError(response, 400, 'INVALID_REQUEST', 'Invalid request', id);
+          return;
+        }
+        const data = url.pathname === '/api/sports/catalog'
+          ? await upstream.getSportsCatalog()
+          : await upstream.getSportsBoosts();
+        success(response, {
+          data,
+          source: SPORTS_SOURCE,
+          fetchedAt: now().toISOString(),
+          requestId: id,
+        });
+        return;
+      }
+
       if (url.pathname === '/api/sports/account') {
         if (Array.from(url.searchParams.keys()).length > 0) {
           sendError(response, 400, 'INVALID_REQUEST', 'Invalid request', id);
