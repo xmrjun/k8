@@ -1,6 +1,16 @@
 'use strict';
 
 const INVALID_DRAFT_INPUT = 'INVALID_DRAFT_INPUT';
+const INVALID_DRAFT_STORE_OPTIONS = 'INVALID_DRAFT_STORE_OPTIONS';
+const IDEMPOTENCY_CONFLICT = 'IDEMPOTENCY_CONFLICT';
+const DEFAULT_DRAFT_TTL_MS = 120_000;
+const DEFAULT_MAX_DRAFTS = 1000;
+const DRAFT_STORE_OPTION_FIELDS = Object.freeze([
+  'now',
+  'idGenerator',
+  'ttlMs',
+  'maxDrafts',
+]);
 const ALLOWED_FIELDS = Object.freeze([
   'scope',
   'sport',
@@ -147,8 +157,128 @@ function normalizeDraftInput(input) {
   };
 }
 
+function invalidStoreOptions() {
+  throw new DraftError(INVALID_DRAFT_STORE_OPTIONS);
+}
+
+function deepFreeze(value, seen = new WeakSet()) {
+  if (value === null || typeof value !== 'object' || seen.has(value)) return value;
+  seen.add(value);
+  for (const nestedValue of Object.values(value)) deepFreeze(nestedValue, seen);
+  return Object.freeze(value);
+}
+
+function draftFingerprint(normalizedInput) {
+  return JSON.stringify(ALLOWED_FIELDS.map((field) => normalizedInput[field]));
+}
+
+function createDraftStore(options) {
+  if (options === null || typeof options !== 'object' || Array.isArray(options)) {
+    invalidStoreOptions();
+  }
+
+  let keys;
+  let descriptors;
+  try {
+    if (Object.getPrototypeOf(options) !== Object.prototype) invalidStoreOptions();
+    keys = Reflect.ownKeys(options);
+    descriptors = Object.getOwnPropertyDescriptors(options);
+  } catch {
+    invalidStoreOptions();
+  }
+  if (keys.some((key) => typeof key !== 'string'
+    || !DRAFT_STORE_OPTION_FIELDS.includes(key))) {
+    invalidStoreOptions();
+  }
+
+  const requiredDescriptors = [descriptors.now, descriptors.idGenerator];
+  const optionalDescriptors = [descriptors.ttlMs, descriptors.maxDrafts].filter(Boolean);
+  if ([...requiredDescriptors, ...optionalDescriptors]
+    .some((descriptor) => !descriptor || !Object.hasOwn(descriptor, 'value'))) {
+    invalidStoreOptions();
+  }
+
+  const now = descriptors.now.value;
+  const idGenerator = descriptors.idGenerator.value;
+  const ttlMs = descriptors.ttlMs?.value ?? DEFAULT_DRAFT_TTL_MS;
+  const maxDrafts = descriptors.maxDrafts?.value ?? DEFAULT_MAX_DRAFTS;
+  if (typeof now !== 'function'
+    || typeof idGenerator !== 'function'
+    || !Number.isSafeInteger(ttlMs)
+    || ttlMs <= 0
+    || !Number.isSafeInteger(maxDrafts)
+    || maxDrafts <= 0) {
+    invalidStoreOptions();
+  }
+
+  const entries = new Map();
+
+  function currentTime() {
+    let value;
+    try {
+      value = now();
+    } catch {
+      invalidStoreOptions();
+    }
+    if (!Number.isFinite(value)) invalidStoreOptions();
+    return value;
+  }
+
+  function cleanExpired(timestamp) {
+    for (const [key, entry] of entries) {
+      if (entry.expiresAt <= timestamp) entries.delete(key);
+    }
+  }
+
+  function locate(normalizedInput) {
+    const fingerprint = draftFingerprint(normalizedInput);
+    const entry = entries.get(normalizedInput.idempotency_key);
+    if (entry && entry.fingerprint !== fingerprint) {
+      throw new DraftError(IDEMPOTENCY_CONFLICT);
+    }
+    return { entry, fingerprint };
+  }
+
+  function findReplay(input) {
+    cleanExpired(currentTime());
+    const normalizedInput = normalizeDraftInput(input);
+    return locate(normalizedInput).entry?.draft;
+  }
+
+  function save(input, draftData) {
+    const timestamp = currentTime();
+    cleanExpired(timestamp);
+    const normalizedInput = normalizeDraftInput(input);
+    const { entry, fingerprint } = locate(normalizedInput);
+    if (entry) return entry.draft;
+
+    let draftId;
+    try {
+      draftId = idGenerator();
+    } catch {
+      invalidStoreOptions();
+    }
+    if (typeof draftId !== 'string' || draftId.length === 0) invalidStoreOptions();
+
+    const draft = deepFreeze(structuredClone({ ...draftData, draft_id: draftId }));
+    entries.set(normalizedInput.idempotency_key, {
+      draft,
+      expiresAt: timestamp + ttlMs,
+      fingerprint,
+    });
+
+    while (entries.size > maxDrafts) {
+      entries.delete(entries.keys().next().value);
+    }
+    return draft;
+  }
+
+  return Object.freeze({ findReplay, save });
+}
+
 module.exports = {
   DraftError,
+  createDraftStore,
   decimalDifferenceExceeds,
   multiplyMoneyByOdds,
   normalizeDraftInput,

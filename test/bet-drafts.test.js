@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 
 const {
   DraftError,
+  createDraftStore,
   decimalDifferenceExceeds,
   multiplyMoneyByOdds,
   normalizeDraftInput,
@@ -205,3 +206,201 @@ for (const [stake, odds, grossReturn] of [
     assert.equal(multiplyMoneyByOdds(stake, odds), grossReturn);
   });
 }
+
+function normalizedInput(overrides = {}) {
+  return normalizeDraftInput(validInput(overrides));
+}
+
+function testStore({ initialNow = 0, ttlMs, maxDrafts } = {}) {
+  let milliseconds = initialNow;
+  let generatedIds = 0;
+  const options = {
+    now: () => milliseconds,
+    idGenerator: () => `draft-${++generatedIds}`,
+  };
+  if (ttlMs !== undefined) options.ttlMs = ttlMs;
+  if (maxDrafts !== undefined) options.maxDrafts = maxDrafts;
+
+  return {
+    store: createDraftStore(options),
+    setNow(value) {
+      milliseconds = value;
+    },
+    generatedIds() {
+      return generatedIds;
+    },
+  };
+}
+
+test('returns the exact original draft for an identical normalized idempotent replay', () => {
+  const { store, generatedIds } = testStore();
+  const input = normalizedInput();
+  const reorderedInput = Object.fromEntries(Object.entries(input).reverse());
+  const original = store.save(input, {
+    state: 'ready_for_manual_confirmation',
+    proposal: { stake: input.stake },
+  });
+
+  assert.strictEqual(store.findReplay(reorderedInput), original);
+  assert.strictEqual(store.save(reorderedInput, { state: 'unused' }), original);
+  assert.equal(generatedIds(), 1);
+});
+
+test('rejects a reused idempotency key with different normalized input', () => {
+  const { store } = testStore();
+  const idempotencyKey = 'request-data-must-not-leak';
+  store.save(normalizedInput({ idempotency_key: idempotencyKey }), { state: 'draft' });
+
+  assert.throws(
+    () => store.findReplay(normalizedInput({
+      idempotency_key: idempotencyKey,
+      stake: '11.00',
+    })),
+    (error) => error instanceof DraftError
+      && error.name === 'DraftError'
+      && error.code === 'IDEMPOTENCY_CONFLICT'
+      && error.message === 'IDEMPOTENCY_CONFLICT'
+      && !error.stack.includes(idempotencyKey),
+  );
+});
+
+test('keeps a draft live before 120 seconds and expires it exactly at 120 seconds', () => {
+  const { store, setNow } = testStore();
+  const input = normalizedInput();
+  const draft = store.save(input, { state: 'draft' });
+
+  setNow(119_999);
+  assert.strictEqual(store.findReplay(input), draft);
+
+  setNow(120_000);
+  assert.equal(store.findReplay(input), undefined);
+});
+
+test('allows an expired idempotency key to create a new draft', () => {
+  const { store, setNow } = testStore();
+  const firstInput = normalizedInput();
+  const first = store.save(firstInput, { version: 1 });
+
+  setNow(120_000);
+  const second = store.save(normalizedInput({ stake: '11.00' }), { version: 2 });
+
+  assert.notStrictEqual(second, first);
+  assert.equal(second.draft_id, 'draft-2');
+  assert.equal(second.version, 2);
+});
+
+test('cleans all expired entries before capacity eviction', () => {
+  const { store, setNow } = testStore({ initialNow: 101, ttlMs: 120, maxDrafts: 2 });
+  const liveInput = normalizedInput({ idempotency_key: 'live-oldest' });
+  const liveDraft = store.save(liveInput, { state: 'live' });
+
+  setNow(0);
+  store.save(normalizedInput({ idempotency_key: 'expired-newest' }), { state: 'expires-first' });
+
+  setNow(120);
+  store.save(normalizedInput({ idempotency_key: 'new-entry' }), { state: 'new' });
+
+  assert.strictEqual(store.findReplay(liveInput), liveDraft);
+});
+
+test('the 1001st live draft evicts the oldest when the default maximum is 1000', () => {
+  const { store } = testStore();
+  let secondDraft;
+  let newestDraft;
+
+  for (let index = 1; index <= 1001; index += 1) {
+    const draft = store.save(normalizedInput({ idempotency_key: `request-${index}` }), {
+      sequence: index,
+    });
+    if (index === 2) secondDraft = draft;
+    if (index === 1001) newestDraft = draft;
+  }
+
+  assert.equal(store.findReplay(normalizedInput({ idempotency_key: 'request-1' })), undefined);
+  assert.strictEqual(
+    store.findReplay(normalizedInput({ idempotency_key: 'request-2' })),
+    secondDraft,
+  );
+  assert.strictEqual(
+    store.findReplay(normalizedInput({ idempotency_key: 'request-1001' })),
+    newestDraft,
+  );
+});
+
+test('stores an immutable detached draft that caller mutation cannot corrupt', () => {
+  const { store } = testStore();
+  const input = normalizedInput();
+  const draftData = {
+    state: 'ready_for_manual_confirmation',
+    proposal: { stake: '10' },
+    notices: ['manual-only'],
+  };
+  const saved = store.save(input, draftData);
+
+  draftData.proposal.stake = '999999';
+  draftData.notices.push('corrupted');
+
+  assert.equal(Object.isFrozen(saved), true);
+  assert.equal(Object.isFrozen(saved.proposal), true);
+  assert.equal(Object.isFrozen(saved.notices), true);
+  assert.throws(() => {
+    saved.proposal.stake = '0.01';
+  }, TypeError);
+  assert.deepEqual(saved.proposal, { stake: '10' });
+  assert.deepEqual(saved.notices, ['manual-only']);
+  assert.strictEqual(store.findReplay(input), saved);
+});
+
+test('rejects invalid draft store construction options with a stable sanitized error', () => {
+  const validOptions = {
+    now: () => 0,
+    idGenerator: () => 'draft-1',
+  };
+  const invalidOptions = [
+    undefined,
+    null,
+    [],
+    {},
+    Object.assign(Object.create({ inherited: true }), validOptions),
+    { ...validOptions, unexpected: true },
+    { ...validOptions, now: 0 },
+    { ...validOptions, idGenerator: 'draft-1' },
+    ...[0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, '120000']
+      .map((ttlMs) => ({ ...validOptions, ttlMs })),
+    ...[0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, '1000']
+      .map((maxDrafts) => ({ ...validOptions, maxDrafts })),
+  ];
+
+  for (const options of invalidOptions) {
+    assert.throws(
+      () => createDraftStore(options),
+      (error) => error instanceof DraftError
+        && error.name === 'DraftError'
+        && error.code === 'INVALID_DRAFT_STORE_OPTIONS'
+        && error.message === 'INVALID_DRAFT_STORE_OPTIONS',
+    );
+  }
+});
+
+test('rejects accessor-backed draft store options without invoking their getters', () => {
+  let getterCalled = false;
+  const options = {
+    idGenerator: () => 'draft-1',
+  };
+  Object.defineProperty(options, 'now', {
+    enumerable: true,
+    get() {
+      getterCalled = true;
+      throw new Error('construction-data-must-not-leak');
+    },
+  });
+
+  assert.throws(
+    () => createDraftStore(options),
+    (error) => error instanceof DraftError
+      && error.code === 'INVALID_DRAFT_STORE_OPTIONS'
+      && error.message === 'INVALID_DRAFT_STORE_OPTIONS'
+      && !error.stack.includes('construction-data-must-not-leak'),
+  );
+  assert.equal(getterCalled, false);
+});
