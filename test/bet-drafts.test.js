@@ -663,7 +663,7 @@ test('creates an immutable manual-confirmation draft from a fresh real-shaped sn
 
 test('allows current odds drift exactly equal to the configured maximum', async () => {
   const { service } = testService({
-    snapshot: sportsSnapshot({ decimalOdds: '2.0000' }),
+    snapshot: sportsSnapshot({ decimalOdds: '2.0000', displayOdds: '1.0000' }),
   });
 
   const draft = await service.create(validInput());
@@ -674,7 +674,7 @@ test('allows current odds drift exactly equal to the configured maximum', async 
 
 test('allows current odds drift below the configured maximum', async () => {
   const { service } = testService({
-    snapshot: sportsSnapshot({ decimalOdds: '1.91' }),
+    snapshot: sportsSnapshot({ decimalOdds: '1.91', displayOdds: '0.91' }),
   });
 
   assert.equal((await service.create(validInput())).current_odds, '1.91');
@@ -682,7 +682,7 @@ test('allows current odds drift below the configured maximum', async () => {
 
 test('rejects current odds drift above the configured maximum', async () => {
   const { service } = testService({
-    snapshot: sportsSnapshot({ decimalOdds: '2.0001' }),
+    snapshot: sportsSnapshot({ decimalOdds: '2.0001', displayOdds: '1.0001' }),
   });
 
   await assert.rejects(service.create(validInput()), assertDraftError('ODDS_DRIFT_EXCEEDED'));
@@ -690,7 +690,7 @@ test('rejects current odds drift above the configured maximum', async () => {
 
 test('treats canonically equal odds as unchanged', async () => {
   const { service } = testService({
-    snapshot: sportsSnapshot({ decimalOdds: '1.9500' }),
+    snapshot: sportsSnapshot({ decimalOdds: '1.9500', displayOdds: '0.9500' }),
   });
 
   const draft = await service.create(validInput());
@@ -702,7 +702,7 @@ test('treats canonically equal odds as unchanged', async () => {
 
 test('calculates projected gross return from current odds with exact half-up rounding', async () => {
   const { service } = testService({
-    snapshot: sportsSnapshot({ decimalOdds: '1.005' }),
+    snapshot: sportsSnapshot({ decimalOdds: '1.005', displayOdds: '0.005' }),
   });
 
   const draft = await service.create(validInput({
@@ -712,6 +712,43 @@ test('calculates projected gross return from current odds with exact half-up rou
   }));
 
   assert.equal(draft.projected_gross_return, '1.01');
+});
+
+test('accepts zero Hong Kong display odds paired with decimal odds one', async () => {
+  const { service } = testService({
+    snapshot: sportsSnapshot({ displayOdds: '0', decimalOdds: '1' }),
+  });
+
+  const draft = await service.create(validInput({
+    expected_odds: '1',
+    max_odds_drift: '0',
+  }));
+
+  assert.equal(draft.current_odds, '1');
+});
+
+test('rejects display and decimal odds that do not differ by exactly one', async () => {
+  const { service } = testService({
+    snapshot: sportsSnapshot({ displayOdds: '0.25', decimalOdds: '1.98' }),
+  });
+
+  await assert.rejects(
+    service.create(validInput()),
+    assertDraftError('MALFORMED_CURRENT_SNAPSHOT'),
+  );
+});
+
+test('accepts an exact odds relationship across different trailing-zero scales', async () => {
+  const { service } = testService({
+    snapshot: sportsSnapshot({ displayOdds: '0.2500', decimalOdds: '1.25' }),
+  });
+
+  const draft = await service.create(validInput({
+    expected_odds: '1.25',
+    max_odds_drift: '0',
+  }));
+
+  assert.equal(draft.current_odds, '1.25');
 });
 
 test('fails closed when the requested event is missing', async () => {

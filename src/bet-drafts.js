@@ -117,6 +117,15 @@ function decimalDifferenceExceeds(actualValue, expectedValue, maximumDriftValue)
   return absoluteDifference > scaledCoefficient(maximumDrift, scale);
 }
 
+function decimalDifferenceEquals(actualValue, expectedValue, requiredDifferenceValue) {
+  const actual = parseDecimal(actualValue);
+  const expected = parseDecimal(expectedValue);
+  const requiredDifference = parseDecimal(requiredDifferenceValue);
+  const scale = Math.max(actual.scale, expected.scale, requiredDifference.scale);
+  return scaledCoefficient(actual, scale) - scaledCoefficient(expected, scale)
+    === scaledCoefficient(requiredDifference, scale);
+}
+
 function multiplyMoneyByOdds(moneyValue, oddsValue) {
   const money = parseDecimal(moneyValue);
   const odds = parseDecimal(oddsValue);
@@ -393,11 +402,14 @@ function isNormalizedText(value) {
     && value === value.trim();
 }
 
-function isPositiveCurrentDecimal(value) {
+function isCurrentDecimal(value) {
   return typeof value === 'string'
     && value.length <= MAX_DECIMAL_LENGTH
-    && CURRENT_DECIMAL_PATTERN.test(value)
-    && !/^0(?:\.0*)?$/.test(value);
+    && CURRENT_DECIMAL_PATTERN.test(value);
+}
+
+function isPositiveCurrentDecimal(value) {
+  return isCurrentDecimal(value) && !/^0(?:\.0*)?$/.test(value);
 }
 
 function validCurrentScore(score) {
@@ -442,8 +454,9 @@ function validateCurrentSelection(selection, eventId, market) {
   }
 
   if (!hasFields(selection, ['display_odds', 'decimal_odds'])
-    || !isPositiveCurrentDecimal(selection.display_odds)
-    || !isPositiveCurrentDecimal(selection.decimal_odds)) {
+    || !isCurrentDecimal(selection.display_odds)
+    || !isPositiveCurrentDecimal(selection.decimal_odds)
+    || !decimalDifferenceEquals(selection.decimal_odds, selection.display_odds, '1')) {
     malformedCurrentSnapshot();
   }
   return canonicalDecimal(selection.decimal_odds);
