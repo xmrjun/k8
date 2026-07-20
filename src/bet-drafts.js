@@ -1,6 +1,7 @@
 'use strict';
 
 const INVALID_DRAFT_INPUT = 'INVALID_DRAFT_INPUT';
+const INVALID_DRAFT_DATA = 'INVALID_DRAFT_DATA';
 const INVALID_DRAFT_STORE_OPTIONS = 'INVALID_DRAFT_STORE_OPTIONS';
 const IDEMPOTENCY_CONFLICT = 'IDEMPOTENCY_CONFLICT';
 const DEFAULT_DRAFT_TTL_MS = 120_000;
@@ -161,11 +162,85 @@ function invalidStoreOptions() {
   throw new DraftError(INVALID_DRAFT_STORE_OPTIONS);
 }
 
-function deepFreeze(value, seen = new WeakSet()) {
-  if (value === null || typeof value !== 'object' || seen.has(value)) return value;
-  seen.add(value);
-  for (const nestedValue of Object.values(value)) deepFreeze(nestedValue, seen);
-  return Object.freeze(value);
+function invalidDraftData() {
+  throw new DraftError(INVALID_DRAFT_DATA);
+}
+
+function cloneDraftValue(value, ancestors, freezeResult = true) {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) invalidDraftData();
+    return value;
+  }
+  if (typeof value !== 'object' || ancestors.has(value)) invalidDraftData();
+
+  const array = Array.isArray(value);
+  const expectedPrototype = array ? Array.prototype : Object.prototype;
+  if (Object.getPrototypeOf(value) !== expectedPrototype) invalidDraftData();
+
+  const keys = Reflect.ownKeys(value);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  if (keys.some((key) => typeof key !== 'string')) invalidDraftData();
+
+  ancestors.add(value);
+  try {
+    if (array) {
+      const lengthDescriptor = descriptors.length;
+      const length = lengthDescriptor?.value;
+      const elementKeys = keys.filter((key) => key !== 'length');
+      if (!lengthDescriptor
+        || !Object.hasOwn(lengthDescriptor, 'value')
+        || elementKeys.length !== length
+        || elementKeys.some((key) => !/^(?:0|[1-9]\d*)$/.test(key)
+          || Number(key) >= length
+          || !descriptors[key]?.enumerable
+          || !Object.hasOwn(descriptors[key], 'value'))) {
+        invalidDraftData();
+      }
+
+      const clone = new Array(length);
+      for (let index = 0; index < length; index += 1) {
+        clone[index] = cloneDraftValue(descriptors[String(index)].value, ancestors);
+      }
+      return freezeResult ? Object.freeze(clone) : clone;
+    }
+
+    const clone = {};
+    for (const key of keys) {
+      const descriptor = descriptors[key];
+      if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value')) invalidDraftData();
+      Object.defineProperty(clone, key, {
+        configurable: true,
+        enumerable: true,
+        value: cloneDraftValue(descriptor.value, ancestors),
+        writable: true,
+      });
+    }
+    return freezeResult ? Object.freeze(clone) : clone;
+  } finally {
+    ancestors.delete(value);
+  }
+}
+
+function cloneDraftData(draftData) {
+  try {
+    if (draftData === null || typeof draftData !== 'object' || Array.isArray(draftData)) {
+      invalidDraftData();
+    }
+    return cloneDraftValue(draftData, new WeakSet(), false);
+  } catch {
+    invalidDraftData();
+  }
+}
+
+function freezeDraft(draftData, draftId) {
+  Object.defineProperty(draftData, 'draft_id', {
+    configurable: true,
+    enumerable: true,
+    value: draftId,
+    writable: true,
+  });
+  return Object.freeze(draftData);
 }
 
 function draftFingerprint(normalizedInput) {
@@ -173,13 +248,12 @@ function draftFingerprint(normalizedInput) {
 }
 
 function createDraftStore(options) {
-  if (options === null || typeof options !== 'object' || Array.isArray(options)) {
-    invalidStoreOptions();
-  }
-
   let keys;
   let descriptors;
   try {
+    if (options === null || typeof options !== 'object' || Array.isArray(options)) {
+      invalidStoreOptions();
+    }
     if (Object.getPrototypeOf(options) !== Object.prototype) invalidStoreOptions();
     keys = Reflect.ownKeys(options);
     descriptors = Object.getOwnPropertyDescriptors(options);
@@ -251,6 +325,7 @@ function createDraftStore(options) {
     const normalizedInput = normalizeDraftInput(input);
     const { entry, fingerprint } = locate(normalizedInput);
     if (entry) return entry.draft;
+    const storedDraftData = cloneDraftData(draftData);
 
     let draftId;
     try {
@@ -260,7 +335,7 @@ function createDraftStore(options) {
     }
     if (typeof draftId !== 'string' || draftId.length === 0) invalidStoreOptions();
 
-    const draft = deepFreeze(structuredClone({ ...draftData, draft_id: draftId }));
+    const draft = freezeDraft(storedDraftData, draftId);
     entries.set(normalizedInput.idempotency_key, {
       draft,
       expiresAt: timestamp + ttlMs,

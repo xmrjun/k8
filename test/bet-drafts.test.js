@@ -351,6 +351,61 @@ test('stores an immutable detached draft that caller mutation cannot corrupt', (
   assert.strictEqual(store.findReplay(input), saved);
 });
 
+for (const [name, invalidValue] of [
+  ['Map', () => new Map([['state', 'mutable']])],
+  ['Set', () => new Set(['mutable'])],
+  ['Date', () => new Date(0)],
+  ['custom-prototype object', () => Object.assign(Object.create({ inherited: true }), {
+    state: 'draft',
+  })],
+  ['cycle', () => {
+    const cycle = {};
+    cycle.self = cycle;
+    return cycle;
+  }],
+  ['undefined', () => undefined],
+  ['function', () => () => 'unsupported'],
+  ['symbol', () => Symbol('unsupported')],
+  ['bigint', () => 1n],
+  ['NaN', () => Number.NaN],
+  ['infinity', () => Number.POSITIVE_INFINITY],
+]) {
+  test(`rejects draft data containing ${name}`, () => {
+    const { store } = testStore();
+
+    assert.throws(
+      () => store.save(normalizedInput(), { metadata: invalidValue() }),
+      (error) => error instanceof DraftError
+        && error.code === 'INVALID_DRAFT_DATA'
+        && error.message === 'INVALID_DRAFT_DATA',
+    );
+    assert.equal(store.findReplay(normalizedInput()), undefined);
+  });
+}
+
+test('rejects accessor-backed draft data without invoking its getter', () => {
+  const { store } = testStore();
+  let getterCalled = false;
+  const draftData = { state: 'draft' };
+  Object.defineProperty(draftData, 'metadata', {
+    enumerable: true,
+    get() {
+      getterCalled = true;
+      throw new Error('draft-data-must-not-leak');
+    },
+  });
+
+  assert.throws(
+    () => store.save(normalizedInput(), draftData),
+    (error) => error instanceof DraftError
+      && error.code === 'INVALID_DRAFT_DATA'
+      && error.message === 'INVALID_DRAFT_DATA'
+      && !error.stack.includes('draft-data-must-not-leak'),
+  );
+  assert.equal(getterCalled, false);
+  assert.equal(store.findReplay(normalizedInput()), undefined);
+});
+
 test('rejects invalid draft store construction options with a stable sanitized error', () => {
   const validOptions = {
     now: () => 0,
@@ -403,4 +458,17 @@ test('rejects accessor-backed draft store options without invoking their getters
       && !error.stack.includes('construction-data-must-not-leak'),
   );
   assert.equal(getterCalled, false);
+});
+
+test('sanitizes revoked Proxy draft store options', () => {
+  const { proxy, revoke } = Proxy.revocable({}, {});
+  revoke();
+
+  assert.throws(
+    () => createDraftStore(proxy),
+    (error) => error instanceof DraftError
+      && error.name === 'DraftError'
+      && error.code === 'INVALID_DRAFT_STORE_OPTIONS'
+      && error.message === 'INVALID_DRAFT_STORE_OPTIONS',
+  );
 });
