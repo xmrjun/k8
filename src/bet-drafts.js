@@ -3,7 +3,12 @@
 const INVALID_DRAFT_INPUT = 'INVALID_DRAFT_INPUT';
 const INVALID_DRAFT_DATA = 'INVALID_DRAFT_DATA';
 const INVALID_DRAFT_STORE_OPTIONS = 'INVALID_DRAFT_STORE_OPTIONS';
+const INVALID_DRAFT_SERVICE_OPTIONS = 'INVALID_DRAFT_SERVICE_OPTIONS';
 const IDEMPOTENCY_CONFLICT = 'IDEMPOTENCY_CONFLICT';
+const MALFORMED_CURRENT_SNAPSHOT = 'MALFORMED_CURRENT_SNAPSHOT';
+const EVENT_UNAVAILABLE = 'EVENT_UNAVAILABLE';
+const SELECTION_UNAVAILABLE = 'SELECTION_UNAVAILABLE';
+const ODDS_DRIFT_EXCEEDED = 'ODDS_DRIFT_EXCEEDED';
 const DEFAULT_DRAFT_TTL_MS = 120_000;
 const DEFAULT_MAX_DRAFTS = 1000;
 const DRAFT_STORE_OPTION_FIELDS = Object.freeze([
@@ -11,6 +16,10 @@ const DRAFT_STORE_OPTION_FIELDS = Object.freeze([
   'idGenerator',
   'ttlMs',
   'maxDrafts',
+]);
+const DRAFT_SERVICE_OPTION_FIELDS = Object.freeze([
+  'upstream',
+  ...DRAFT_STORE_OPTION_FIELDS,
 ]);
 const ALLOWED_FIELDS = Object.freeze([
   'scope',
@@ -351,8 +360,216 @@ function createDraftStore(options) {
   return Object.freeze({ findReplay, save });
 }
 
+function invalidServiceOptions() {
+  throw new DraftError(INVALID_DRAFT_SERVICE_OPTIONS);
+}
+
+function malformedCurrentSnapshot() {
+  throw new DraftError(MALFORMED_CURRENT_SNAPSHOT);
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function currentSelectionOdds(snapshot, normalizedInput) {
+  try {
+    if (!isRecord(snapshot) || !Array.isArray(snapshot.events)) {
+      malformedCurrentSnapshot();
+    }
+
+    const matchingEvents = [];
+    for (const event of snapshot.events) {
+      if (!isRecord(event)
+        || typeof event.event_id !== 'string'
+        || !Array.isArray(event.markets)) {
+        malformedCurrentSnapshot();
+      }
+      if (event.event_id === normalizedInput.event_id) matchingEvents.push(event);
+    }
+    if (matchingEvents.length !== 1) throw new DraftError(EVENT_UNAVAILABLE);
+
+    const matchingSelections = [];
+    for (const market of matchingEvents[0].markets) {
+      if (!isRecord(market) || !Array.isArray(market.selections)) {
+        malformedCurrentSnapshot();
+      }
+      for (const selection of market.selections) {
+        if (!isRecord(selection)
+          || typeof selection.selection_key !== 'string'
+          || typeof selection.available !== 'boolean') {
+          malformedCurrentSnapshot();
+        }
+
+        let decimalOdds;
+        if (selection.available) {
+          try {
+            decimalOdds = requireDecimal(selection.decimal_odds, { positive: true });
+          } catch {
+            malformedCurrentSnapshot();
+          }
+        }
+        if (selection.selection_key === normalizedInput.selection_key) {
+          matchingSelections.push({ available: selection.available, decimalOdds });
+        }
+      }
+    }
+
+    if (matchingSelections.length !== 1 || !matchingSelections[0].available) {
+      throw new DraftError(SELECTION_UNAVAILABLE);
+    }
+    return matchingSelections[0].decimalOdds;
+  } catch (error) {
+    if (error instanceof DraftError
+      && [
+        MALFORMED_CURRENT_SNAPSHOT,
+        EVENT_UNAVAILABLE,
+        SELECTION_UNAVAILABLE,
+      ].includes(error.code)) {
+      throw error;
+    }
+    malformedCurrentSnapshot();
+  }
+}
+
+function createBetDraftService(options) {
+  let keys;
+  let descriptors;
+  try {
+    if (!isRecord(options) || Object.getPrototypeOf(options) !== Object.prototype) {
+      invalidServiceOptions();
+    }
+    keys = Reflect.ownKeys(options);
+    descriptors = Object.getOwnPropertyDescriptors(options);
+  } catch {
+    invalidServiceOptions();
+  }
+
+  if (keys.some((key) => typeof key !== 'string'
+    || !DRAFT_SERVICE_OPTION_FIELDS.includes(key))) {
+    invalidServiceOptions();
+  }
+  const requiredDescriptors = [
+    descriptors.upstream,
+    descriptors.now,
+    descriptors.idGenerator,
+  ];
+  const optionalDescriptors = [descriptors.ttlMs, descriptors.maxDrafts].filter(Boolean);
+  if ([...requiredDescriptors, ...optionalDescriptors]
+    .some((descriptor) => !descriptor || !Object.hasOwn(descriptor, 'value'))) {
+    invalidServiceOptions();
+  }
+
+  const upstream = descriptors.upstream.value;
+  const now = descriptors.now.value;
+  const idGenerator = descriptors.idGenerator.value;
+  const ttlMs = descriptors.ttlMs?.value ?? DEFAULT_DRAFT_TTL_MS;
+  const maxDrafts = descriptors.maxDrafts?.value ?? DEFAULT_MAX_DRAFTS;
+  let getSportsDescriptor;
+  try {
+    if (!isRecord(upstream)) invalidServiceOptions();
+    let owner = upstream;
+    while (owner !== null && !getSportsDescriptor) {
+      getSportsDescriptor = Object.getOwnPropertyDescriptor(owner, 'getSports');
+      owner = Object.getPrototypeOf(owner);
+    }
+  } catch {
+    invalidServiceOptions();
+  }
+  if (!getSportsDescriptor
+    || !Object.hasOwn(getSportsDescriptor, 'value')
+    || typeof getSportsDescriptor.value !== 'function'
+    || typeof now !== 'function'
+    || typeof idGenerator !== 'function'
+    || !Number.isSafeInteger(ttlMs)
+    || ttlMs <= 0
+    || ttlMs > DEFAULT_DRAFT_TTL_MS
+    || !Number.isSafeInteger(maxDrafts)
+    || maxDrafts <= 0
+    || maxDrafts > DEFAULT_MAX_DRAFTS) {
+    invalidServiceOptions();
+  }
+
+  const getSports = getSportsDescriptor.value;
+  let saveTimestamp;
+  const store = createDraftStore({
+    now: () => saveTimestamp ?? now(),
+    idGenerator,
+    ttlMs,
+    maxDrafts,
+  });
+
+  function serviceTimestamp() {
+    let timestamp;
+    try {
+      timestamp = now();
+    } catch {
+      invalidServiceOptions();
+    }
+    if (!Number.isSafeInteger(timestamp)
+      || timestamp < 0) {
+      invalidServiceOptions();
+    }
+    const expiresAt = timestamp + ttlMs;
+    if (!Number.isSafeInteger(expiresAt)) invalidServiceOptions();
+    try {
+      return {
+        createdAt: new Date(timestamp).toISOString(),
+        expiresAt: new Date(expiresAt).toISOString(),
+        timestamp,
+      };
+    } catch {
+      invalidServiceOptions();
+    }
+  }
+
+  async function create(rawInput) {
+    const normalizedInput = normalizeDraftInput(rawInput);
+    const replay = store.findReplay(normalizedInput);
+    if (replay) return replay;
+
+    const snapshot = await getSports.call(upstream, {
+      scope: normalizedInput.scope,
+      sport: normalizedInput.sport,
+    });
+    const currentOdds = currentSelectionOdds(snapshot, normalizedInput);
+    if (decimalDifferenceExceeds(
+      currentOdds,
+      normalizedInput.expected_odds,
+      normalizedInput.max_odds_drift,
+    )) {
+      throw new DraftError(ODDS_DRIFT_EXCEEDED);
+    }
+
+    const { createdAt, expiresAt, timestamp } = serviceTimestamp();
+    saveTimestamp = timestamp;
+    try {
+      return store.save(normalizedInput, {
+        state: 'ready_for_manual_confirmation',
+        scope: normalizedInput.scope,
+        sport: normalizedInput.sport,
+        event_id: normalizedInput.event_id,
+        selection_key: normalizedInput.selection_key,
+        stake: normalizedInput.stake,
+        expected_odds: normalizedInput.expected_odds,
+        current_odds: currentOdds,
+        max_odds_drift: normalizedInput.max_odds_drift,
+        odds_changed: currentOdds !== normalizedInput.expected_odds,
+        projected_gross_return: multiplyMoneyByOdds(normalizedInput.stake, currentOdds),
+        created_at: createdAt,
+        expires_at: expiresAt,
+      });
+    } finally {
+      saveTimestamp = undefined;
+    }
+  }
+
+  return Object.freeze({ create });
+}
+
 module.exports = {
   DraftError,
+  createBetDraftService,
   createDraftStore,
   decimalDifferenceExceeds,
   multiplyMoneyByOdds,

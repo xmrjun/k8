@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 
 const {
   DraftError,
+  createBetDraftService,
   createDraftStore,
   decimalDifferenceExceeds,
   multiplyMoneyByOdds,
@@ -546,5 +547,363 @@ test('sanitizes revoked Proxy draft store options', () => {
       && error.name === 'DraftError'
       && error.code === 'INVALID_DRAFT_STORE_OPTIONS'
       && error.message === 'INVALID_DRAFT_STORE_OPTIONS',
+  );
+});
+
+function sportsSnapshot({
+  eventId = '900000001',
+  selectionKey = '900000001:full_time:1x2:home',
+  decimalOdds = '1.98',
+  available = true,
+} = {}) {
+  return {
+    events: [{
+      event_id: eventId,
+      sport: 'football',
+      scope: 'live',
+      markets: [{
+        period: 'full_time',
+        type: '1x2',
+        selections: [{
+          selection_key: selectionKey,
+          decimal_odds: decimalOdds,
+          available,
+          display_odds: '0.98',
+        }],
+      }],
+    }],
+    count: 1,
+    truncated: false,
+  };
+}
+
+function testService({
+  snapshot = sportsSnapshot(),
+  initialNow = Date.parse('2026-07-20T01:02:03.000Z'),
+  ttlMs,
+  maxDrafts,
+  getSports,
+} = {}) {
+  let milliseconds = initialNow;
+  let generatedIds = 0;
+  const calls = [];
+  const upstream = {
+    async getSports(options) {
+      calls.push(options);
+      if (getSports) return getSports(options);
+      return snapshot;
+    },
+  };
+  const options = {
+    upstream,
+    now: () => milliseconds,
+    idGenerator: () => `verified-draft-${++generatedIds}`,
+  };
+  if (ttlMs !== undefined) options.ttlMs = ttlMs;
+  if (maxDrafts !== undefined) options.maxDrafts = maxDrafts;
+
+  return {
+    service: createBetDraftService(options),
+    calls,
+    generatedIds: () => generatedIds,
+    setNow(value) {
+      milliseconds = value;
+    },
+  };
+}
+
+function assertDraftError(code) {
+  return (error) => error instanceof DraftError
+    && error.name === 'DraftError'
+    && error.code === code
+    && error.message === code;
+}
+
+test('creates an immutable manual-confirmation draft from a fresh real-shaped snapshot', async () => {
+  const { service, calls } = testService();
+
+  const draft = await service.create(validInput());
+
+  assert.deepEqual(calls, [{ scope: 'live', sport: 'football' }]);
+  assert.deepEqual(draft, {
+    state: 'ready_for_manual_confirmation',
+    scope: 'live',
+    sport: 'football',
+    event_id: '900000001',
+    selection_key: '900000001:full_time:1x2:home',
+    stake: '10',
+    expected_odds: '1.95',
+    current_odds: '1.98',
+    max_odds_drift: '0.05',
+    odds_changed: true,
+    projected_gross_return: '19.80',
+    created_at: '2026-07-20T01:02:03.000Z',
+    expires_at: '2026-07-20T01:04:03.000Z',
+    draft_id: 'verified-draft-1',
+  });
+  assert.equal(Object.isFrozen(draft), true);
+  assert.throws(() => {
+    draft.stake = '999';
+  }, TypeError);
+});
+
+test('allows current odds drift exactly equal to the configured maximum', async () => {
+  const { service } = testService({
+    snapshot: sportsSnapshot({ decimalOdds: '2.0000' }),
+  });
+
+  const draft = await service.create(validInput());
+
+  assert.equal(draft.current_odds, '2');
+  assert.equal(draft.odds_changed, true);
+});
+
+test('allows current odds drift below the configured maximum', async () => {
+  const { service } = testService({
+    snapshot: sportsSnapshot({ decimalOdds: '1.91' }),
+  });
+
+  assert.equal((await service.create(validInput())).current_odds, '1.91');
+});
+
+test('rejects current odds drift above the configured maximum', async () => {
+  const { service } = testService({
+    snapshot: sportsSnapshot({ decimalOdds: '2.0001' }),
+  });
+
+  await assert.rejects(service.create(validInput()), assertDraftError('ODDS_DRIFT_EXCEEDED'));
+});
+
+test('treats canonically equal odds as unchanged', async () => {
+  const { service } = testService({
+    snapshot: sportsSnapshot({ decimalOdds: '01.9500' }),
+  });
+
+  const draft = await service.create(validInput());
+
+  assert.equal(draft.current_odds, '1.95');
+  assert.equal(draft.expected_odds, '1.95');
+  assert.equal(draft.odds_changed, false);
+});
+
+test('calculates projected gross return from current odds with exact half-up rounding', async () => {
+  const { service } = testService({
+    snapshot: sportsSnapshot({ decimalOdds: '1.005' }),
+  });
+
+  const draft = await service.create(validInput({
+    stake: '1.00',
+    expected_odds: '1.00',
+    max_odds_drift: '0.005',
+  }));
+
+  assert.equal(draft.projected_gross_return, '1.01');
+});
+
+test('fails closed when the requested event is missing', async () => {
+  const { service } = testService({ snapshot: { events: [] } });
+
+  await assert.rejects(service.create(validInput()), assertDraftError('EVENT_UNAVAILABLE'));
+});
+
+test('fails closed when the requested event appears more than once', async () => {
+  const event = sportsSnapshot().events[0];
+  const { service } = testService({ snapshot: { events: [event, event] } });
+
+  await assert.rejects(service.create(validInput()), assertDraftError('EVENT_UNAVAILABLE'));
+});
+
+test('fails closed when the requested selection is missing', async () => {
+  const { service } = testService({
+    snapshot: sportsSnapshot({ selectionKey: '900000001:full_time:1x2:away' }),
+  });
+
+  await assert.rejects(service.create(validInput()), assertDraftError('SELECTION_UNAVAILABLE'));
+});
+
+test('fails closed when the requested selection appears more than once in its event', async () => {
+  const snapshot = sportsSnapshot();
+  snapshot.events[0].markets.push({
+    period: 'full_time',
+    type: 'duplicate-test',
+    selections: [{
+      selection_key: validInput().selection_key,
+      decimal_odds: '1.98',
+      available: true,
+    }],
+  });
+  const { service } = testService({ snapshot });
+
+  await assert.rejects(service.create(validInput()), assertDraftError('SELECTION_UNAVAILABLE'));
+});
+
+test('fails closed when the requested selection is locked', async () => {
+  const snapshot = sportsSnapshot({ available: false, decimalOdds: undefined });
+  const { service } = testService({ snapshot });
+
+  await assert.rejects(service.create(validInput()), assertDraftError('SELECTION_UNAVAILABLE'));
+});
+
+for (const [name, snapshot] of [
+  ['missing events array', {}],
+  ['non-array markets', { events: [{ event_id: '900000001', markets: {} }] }],
+  ['non-array selections', {
+    events: [{ event_id: '900000001', markets: [{ selections: null }] }],
+  }],
+  ['malformed current odds', sportsSnapshot({ decimalOdds: 'not-private-odds' })],
+  ['non-positive current odds', sportsSnapshot({ decimalOdds: '0' })],
+  ['malformed availability', sportsSnapshot({ available: 'true' })],
+]) {
+  test(`rejects ${name} with a sanitized malformed-snapshot error`, async () => {
+    const { service } = testService({ snapshot });
+
+    await assert.rejects(
+      service.create(validInput()),
+      assertDraftError('MALFORMED_CURRENT_SNAPSHOT'),
+    );
+  });
+}
+
+test('propagates an upstream rejection unchanged', async () => {
+  const upstreamFailure = Object.assign(new Error('private-upstream-detail'), {
+    code: 'UPSTREAM_TIMEOUT',
+  });
+  const { service } = testService({
+    getSports: async () => {
+      throw upstreamFailure;
+    },
+  });
+
+  await assert.rejects(service.create(validInput()), (error) => error === upstreamFailure);
+});
+
+test('default draft timestamps match the store expiry boundary exactly', async () => {
+  const createdAt = Date.parse('2026-07-20T01:02:03.000Z');
+  const { service, calls, setNow } = testService({ initialNow: createdAt });
+  const input = validInput();
+  const draft = await service.create(input);
+
+  assert.equal(Date.parse(draft.expires_at) - Date.parse(draft.created_at), 120_000);
+  setNow(createdAt + 119_999);
+  assert.strictEqual(await service.create(input), draft);
+  setNow(createdAt + 120_000);
+  assert.notStrictEqual(await service.create(input), draft);
+  assert.equal(calls.length, 2);
+});
+
+test('custom TTL controls both returned timestamps and replay expiry', async () => {
+  const createdAt = Date.parse('2026-07-20T01:02:03.000Z');
+  const { service, calls, setNow } = testService({ initialNow: createdAt, ttlMs: 10_000 });
+  const input = validInput();
+  const draft = await service.create(input);
+
+  assert.equal(Date.parse(draft.expires_at) - Date.parse(draft.created_at), 10_000);
+  setNow(createdAt + 10_000);
+  await service.create(input);
+  assert.equal(calls.length, 2);
+});
+
+test('identical live replay returns the exact original draft without a second upstream read', async () => {
+  const { service, calls, generatedIds } = testService();
+  const first = await service.create(validInput());
+  const second = await service.create(validInput({
+    stake: '010.0',
+    expected_odds: '01.950',
+    max_odds_drift: '00.050',
+  }));
+
+  assert.strictEqual(second, first);
+  assert.equal(calls.length, 1);
+  assert.equal(generatedIds(), 1);
+});
+
+test('idempotency conflict occurs before a second upstream read', async () => {
+  const { service, calls } = testService();
+  await service.create(validInput());
+
+  await assert.rejects(
+    service.create(validInput({ stake: '11.00' })),
+    assertDraftError('IDEMPOTENCY_CONFLICT'),
+  );
+  assert.equal(calls.length, 1);
+});
+
+test('rejects unsafe service construction options with a fixed sanitized error', () => {
+  const validOptions = {
+    upstream: { async getSports() { return sportsSnapshot(); } },
+    now: () => 0,
+    idGenerator: () => 'draft-1',
+  };
+  const invalidOptions = [
+    undefined,
+    null,
+    [],
+    {},
+    Object.assign(Object.create({ inherited: true }), validOptions),
+    { ...validOptions, unexpected: true },
+    { ...validOptions, upstream: null },
+    { ...validOptions, upstream: {} },
+    { ...validOptions, upstream: { getSports: true } },
+    { ...validOptions, now: 0 },
+    { ...validOptions, idGenerator: 'draft-1' },
+    { ...validOptions, ttlMs: 120_001 },
+    { ...validOptions, maxDrafts: 1001 },
+  ];
+
+  for (const options of invalidOptions) {
+    assert.throws(
+      () => createBetDraftService(options),
+      assertDraftError('INVALID_DRAFT_SERVICE_OPTIONS'),
+    );
+  }
+});
+
+test('rejects accessor-backed service options without invoking getters', () => {
+  let getterCalled = false;
+  const options = {
+    upstream: { async getSports() { return sportsSnapshot(); } },
+    idGenerator: () => 'draft-1',
+  };
+  Object.defineProperty(options, 'now', {
+    enumerable: true,
+    get() {
+      getterCalled = true;
+      throw new Error('private-construction-detail');
+    },
+  });
+
+  assert.throws(
+    () => createBetDraftService(options),
+    assertDraftError('INVALID_DRAFT_SERVICE_OPTIONS'),
+  );
+  assert.equal(getterCalled, false);
+});
+
+test('accepts an upstream whose getSports method is prototype-backed', async () => {
+  class SportsUpstream {
+    async getSports() {
+      return sportsSnapshot();
+    }
+  }
+  const service = createBetDraftService({
+    upstream: new SportsUpstream(),
+    now: () => 0,
+    idGenerator: () => 'draft-1',
+  });
+
+  assert.equal((await service.create(validInput())).draft_id, 'draft-1');
+});
+
+test('sanitizes an invalid clock value returned after the upstream read', async () => {
+  let clockReads = 0;
+  const service = createBetDraftService({
+    upstream: { async getSports() { return sportsSnapshot(); } },
+    now: () => (++clockReads === 1 ? 0 : 0n),
+    idGenerator: () => 'draft-1',
+  });
+
+  await assert.rejects(
+    service.create(validInput()),
+    assertDraftError('INVALID_DRAFT_SERVICE_OPTIONS'),
   );
 });
