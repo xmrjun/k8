@@ -166,13 +166,13 @@ function invalidDraftData() {
   throw new DraftError(INVALID_DRAFT_DATA);
 }
 
-function cloneDraftValue(value, ancestors, freezeResult = true) {
+function cloneDraftValue(value, seen, freezeResult = true) {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) invalidDraftData();
     return value;
   }
-  if (typeof value !== 'object' || ancestors.has(value)) invalidDraftData();
+  if (typeof value !== 'object' || seen.has(value)) invalidDraftData();
 
   const array = Array.isArray(value);
   const expectedPrototype = array ? Array.prototype : Object.prototype;
@@ -182,44 +182,40 @@ function cloneDraftValue(value, ancestors, freezeResult = true) {
   const descriptors = Object.getOwnPropertyDescriptors(value);
   if (keys.some((key) => typeof key !== 'string')) invalidDraftData();
 
-  ancestors.add(value);
-  try {
-    if (array) {
-      const lengthDescriptor = descriptors.length;
-      const length = lengthDescriptor?.value;
-      const elementKeys = keys.filter((key) => key !== 'length');
-      if (!lengthDescriptor
-        || !Object.hasOwn(lengthDescriptor, 'value')
-        || elementKeys.length !== length
-        || elementKeys.some((key) => !/^(?:0|[1-9]\d*)$/.test(key)
-          || Number(key) >= length
-          || !descriptors[key]?.enumerable
-          || !Object.hasOwn(descriptors[key], 'value'))) {
-        invalidDraftData();
-      }
-
-      const clone = new Array(length);
-      for (let index = 0; index < length; index += 1) {
-        clone[index] = cloneDraftValue(descriptors[String(index)].value, ancestors);
-      }
-      return freezeResult ? Object.freeze(clone) : clone;
+  seen.add(value);
+  if (array) {
+    const lengthDescriptor = descriptors.length;
+    const length = lengthDescriptor?.value;
+    const elementKeys = keys.filter((key) => key !== 'length');
+    if (!lengthDescriptor
+      || !Object.hasOwn(lengthDescriptor, 'value')
+      || elementKeys.length !== length
+      || elementKeys.some((key) => !/^(?:0|[1-9]\d*)$/.test(key)
+        || Number(key) >= length
+        || !descriptors[key]?.enumerable
+        || !Object.hasOwn(descriptors[key], 'value'))) {
+      invalidDraftData();
     }
 
-    const clone = {};
-    for (const key of keys) {
-      const descriptor = descriptors[key];
-      if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value')) invalidDraftData();
-      Object.defineProperty(clone, key, {
-        configurable: true,
-        enumerable: true,
-        value: cloneDraftValue(descriptor.value, ancestors),
-        writable: true,
-      });
+    const clone = new Array(length);
+    for (let index = 0; index < length; index += 1) {
+      clone[index] = cloneDraftValue(descriptors[String(index)].value, seen);
     }
     return freezeResult ? Object.freeze(clone) : clone;
-  } finally {
-    ancestors.delete(value);
   }
+
+  const clone = {};
+  for (const key of keys) {
+    const descriptor = descriptors[key];
+    if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value')) invalidDraftData();
+    Object.defineProperty(clone, key, {
+      configurable: true,
+      enumerable: true,
+      value: cloneDraftValue(descriptor.value, seen),
+      writable: true,
+    });
+  }
+  return freezeResult ? Object.freeze(clone) : clone;
 }
 
 function cloneDraftData(draftData) {
@@ -280,8 +276,10 @@ function createDraftStore(options) {
     || typeof idGenerator !== 'function'
     || !Number.isSafeInteger(ttlMs)
     || ttlMs <= 0
+    || ttlMs > DEFAULT_DRAFT_TTL_MS
     || !Number.isSafeInteger(maxDrafts)
-    || maxDrafts <= 0) {
+    || maxDrafts <= 0
+    || maxDrafts > DEFAULT_MAX_DRAFTS) {
     invalidStoreOptions();
   }
 
@@ -294,7 +292,7 @@ function createDraftStore(options) {
     } catch {
       invalidStoreOptions();
     }
-    if (!Number.isFinite(value)) invalidStoreOptions();
+    if (!Number.isSafeInteger(value) || value < 0) invalidStoreOptions();
     return value;
   }
 
@@ -321,6 +319,8 @@ function createDraftStore(options) {
 
   function save(input, draftData) {
     const timestamp = currentTime();
+    const expiresAt = timestamp + ttlMs;
+    if (!Number.isSafeInteger(expiresAt)) invalidStoreOptions();
     cleanExpired(timestamp);
     const normalizedInput = normalizeDraftInput(input);
     const { entry, fingerprint } = locate(normalizedInput);
@@ -338,7 +338,7 @@ function createDraftStore(options) {
     const draft = freezeDraft(storedDraftData, draftId);
     entries.set(normalizedInput.idempotency_key, {
       draft,
-      expiresAt: timestamp + ttlMs,
+      expiresAt,
       fingerprint,
     });
 

@@ -406,6 +406,19 @@ test('rejects accessor-backed draft data without invoking its getter', () => {
   assert.equal(store.findReplay(normalizedInput()), undefined);
 });
 
+test('rejects repeated draft references to keep stored data tree-shaped', () => {
+  const { store } = testStore();
+  const shared = { value: 'shared' };
+
+  assert.throws(
+    () => store.save(normalizedInput(), { left: shared, right: shared }),
+    (error) => error instanceof DraftError
+      && error.code === 'INVALID_DRAFT_DATA'
+      && error.message === 'INVALID_DRAFT_DATA',
+  );
+  assert.equal(store.findReplay(normalizedInput()), undefined);
+});
+
 test('rejects invalid draft store construction options with a stable sanitized error', () => {
   const validOptions = {
     now: () => 0,
@@ -435,6 +448,69 @@ test('rejects invalid draft store construction options with a stable sanitized e
         && error.message === 'INVALID_DRAFT_STORE_OPTIONS',
     );
   }
+});
+
+test('rejects a draft TTL above the 120-second hard limit', () => {
+  const options = {
+    now: () => 0,
+    idGenerator: () => 'draft-1',
+  };
+
+  assert.doesNotThrow(() => createDraftStore({ ...options, ttlMs: 120_000 }));
+  assert.throws(
+    () => createDraftStore({ ...options, ttlMs: 120_001 }),
+    (error) => error instanceof DraftError
+      && error.code === 'INVALID_DRAFT_STORE_OPTIONS'
+      && error.message === 'INVALID_DRAFT_STORE_OPTIONS',
+  );
+});
+
+test('rejects a draft capacity above the 1000-entry hard limit', () => {
+  const options = {
+    now: () => 0,
+    idGenerator: () => 'draft-1',
+  };
+
+  assert.doesNotThrow(() => createDraftStore({ ...options, maxDrafts: 1000 }));
+  assert.throws(
+    () => createDraftStore({ ...options, maxDrafts: 1001 }),
+    (error) => error instanceof DraftError
+      && error.code === 'INVALID_DRAFT_STORE_OPTIONS'
+      && error.message === 'INVALID_DRAFT_STORE_OPTIONS',
+  );
+});
+
+test('rejects invalid millisecond clock values on every store operation', () => {
+  for (const clockValue of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+    const store = createDraftStore({
+      now: () => clockValue,
+      idGenerator: () => 'draft-1',
+    });
+    const assertInvalidClock = (operation) => assert.throws(
+      operation,
+      (error) => error instanceof DraftError
+        && error.code === 'INVALID_DRAFT_STORE_OPTIONS'
+        && error.message === 'INVALID_DRAFT_STORE_OPTIONS',
+    );
+
+    assertInvalidClock(() => store.findReplay(normalizedInput()));
+    assertInvalidClock(() => store.save(normalizedInput(), { state: 'draft' }));
+  }
+});
+
+test('rejects an expiry timestamp outside the safe integer range', () => {
+  const store = createDraftStore({
+    now: () => Number.MAX_SAFE_INTEGER,
+    idGenerator: () => 'draft-1',
+    ttlMs: 1,
+  });
+
+  assert.throws(
+    () => store.save(normalizedInput(), { state: 'draft' }),
+    (error) => error instanceof DraftError
+      && error.code === 'INVALID_DRAFT_STORE_OPTIONS'
+      && error.message === 'INVALID_DRAFT_STORE_OPTIONS',
+  );
 });
 
 test('rejects accessor-backed draft store options without invoking their getters', () => {
