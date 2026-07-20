@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
+const { Readable } = require('node:stream');
 
 const { createApp } = require('../src/app');
 const { createFakeUpstream } = require('../src/upstream/fake');
@@ -41,6 +42,36 @@ async function request(baseUrl, path, options = {}) {
   };
 }
 
+async function invokeApp(app, {
+  method = 'GET',
+  path = '/',
+  headers = {},
+  body = [],
+} = {}) {
+  const requestStream = body instanceof Readable
+    ? body
+    : Readable.from(Array.isArray(body) ? body : [body]);
+  requestStream.method = method;
+  requestStream.url = path;
+  requestStream.headers = headers;
+  const response = {
+    writeHead(status, responseHeaders) {
+      this.status = status;
+      this.headers = responseHeaders;
+    },
+    end(serialized) {
+      this.serialized = serialized;
+    },
+  };
+
+  await app(requestStream, response);
+  return {
+    status: response.status,
+    headers: new Headers(response.headers),
+    body: JSON.parse(response.serialized),
+  };
+}
+
 function authorized(options = {}) {
   return {
     ...options,
@@ -49,6 +80,78 @@ function authorized(options = {}) {
       ...options.headers,
     },
   };
+}
+
+function validDraftInput(overrides = {}) {
+  return {
+    scope: 'live',
+    sport: 'football',
+    event_id: '900000001',
+    selection_key: '900000001:full_time:1x2:home',
+    stake: '10.00',
+    expected_odds: '1.9500',
+    max_odds_drift: '0.05',
+    idempotency_key: 'client-request-1',
+    ...overrides,
+  };
+}
+
+function realShapedSportsSnapshot({
+  eventId = '900000001',
+  decimalOdds = '1.98',
+  available = true,
+} = {}) {
+  const selection = {
+    selection_key: `${eventId}:full_time:1x2:home`,
+    name: 'home',
+    odds_format: 'hong_kong',
+    available,
+  };
+  if (available) {
+    selection.display_odds = String(Number(decimalOdds) - 1);
+    selection.decimal_odds = decimalOdds;
+  }
+  return {
+    events: [{
+      event_id: eventId,
+      sport: 'football',
+      scope: 'live',
+      league: 'Premier League',
+      home: 'Home FC',
+      away: 'Away FC',
+      score: { home: 1, away: 0 },
+      clock: '55:20',
+      markets: [{
+        period: 'full_time',
+        type: '1x2',
+        selections: [selection],
+      }],
+    }],
+    count: 1,
+    truncated: false,
+  };
+}
+
+function draftRequest(input = validDraftInput(), options = {}) {
+  return authorized({
+    method: 'POST',
+    body: JSON.stringify(input),
+    ...options,
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      ...options.headers,
+    },
+  });
+}
+
+async function invokeDraft(app, input = validDraftInput(), options = {}) {
+  const requestOptions = draftRequest(input, options);
+  return invokeApp(app, {
+    method: requestOptions.method,
+    path: options.path || '/api/bets/drafts',
+    headers: requestOptions.headers,
+    body: requestOptions.body,
+  });
 }
 
 test('GET /health succeeds without authentication', async () => {
@@ -63,6 +166,315 @@ test('GET /health succeeds without authentication', async () => {
     });
   });
 });
+
+test('POST /api/bets/drafts returns a local manual-confirmation draft envelope', async () => {
+  const upstream = createFakeUpstream({ sports: realShapedSportsSnapshot() });
+  const app = createApp({
+    apiToken: API_TOKEN,
+    upstream,
+    now: () => new Date('2026-07-19T12:00:00.000Z'),
+    requestId: () => 'request-test',
+    draftId: () => 'draft-http-1',
+  });
+  const options = draftRequest();
+  const response = await invokeApp(app, {
+    method: options.method,
+    path: '/api/bets/drafts',
+    headers: options.headers,
+    body: options.body,
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body, {
+    data: {
+      state: 'ready_for_manual_confirmation',
+      scope: 'live',
+      sport: 'football',
+      event_id: '900000001',
+      selection_key: '900000001:full_time:1x2:home',
+      stake: '10',
+      expected_odds: '1.95',
+      current_odds: '1.98',
+      max_odds_drift: '0.05',
+      odds_changed: true,
+      projected_gross_return: '19.80',
+      created_at: '2026-07-19T12:00:00.000Z',
+      expires_at: '2026-07-19T12:02:00.000Z',
+      draft_id: 'draft-http-1',
+    },
+    source: 'im-sports-browser',
+    fetched_at: '2026-07-19T12:00:00.000Z',
+    request_id: 'request-test',
+  });
+  assert.deepEqual(upstream.calls.sports, [{ scope: 'live', sport: 'football' }]);
+});
+
+test('POST /api/bets/drafts authenticates before validating or reading the body', async () => {
+  let reads = 0;
+  const body = new Readable({
+    read() {
+      reads += 1;
+      this.push('{malformed-private-body');
+      this.push(null);
+    },
+  });
+  const upstream = createFakeUpstream({ sports: realShapedSportsSnapshot() });
+  const app = createApp({ apiToken: API_TOKEN, upstream });
+
+  const response = await invokeApp(app, {
+    method: 'POST',
+    path: '/api/bets/drafts?private=query',
+    headers: { 'content-type': 'text/plain' },
+    body,
+  });
+
+  assert.equal(response.status, 401);
+  assert.equal(response.body.error.code, 'UNAUTHORIZED');
+  assert.equal(reads, 0);
+  assert.equal(upstream.calls.sports.length, 0);
+});
+
+test('POST /api/bets/drafts rejects query parameters without reading or calling upstream', async () => {
+  let reads = 0;
+  const body = new Readable({
+    read() {
+      reads += 1;
+      this.push(JSON.stringify(validDraftInput()));
+      this.push(null);
+    },
+  });
+  const upstream = createFakeUpstream({ sports: realShapedSportsSnapshot() });
+  const app = createApp({ apiToken: API_TOKEN, upstream });
+
+  const response = await invokeApp(app, {
+    method: 'POST',
+    path: '/api/bets/drafts?extra=value',
+    headers: {
+      authorization: `Bearer ${API_TOKEN}`,
+      'content-type': 'application/json',
+    },
+    body,
+  });
+
+  assert.equal(response.status, 400);
+  assert.equal(response.body.error.code, 'INVALID_REQUEST');
+  assert.equal(reads, 0);
+  assert.equal(upstream.calls.sports.length, 0);
+});
+
+for (const [name, headers, body, status, code] of [
+  ['missing content type', {}, '{}', 415, 'UNSUPPORTED_MEDIA_TYPE'],
+  ['unsupported charset', { 'content-type': 'application/json; charset=utf-16' }, '{}', 415, 'UNSUPPORTED_CHARSET'],
+  ['invalid content length', { 'content-type': 'application/json', 'content-length': '-1' }, '{}', 400, 'INVALID_REQUEST'],
+  ['oversized declared body', { 'content-type': 'application/json', 'content-length': '8193' }, '{}', 413, 'PAYLOAD_TOO_LARGE'],
+  ['oversized streamed body', { 'content-type': 'application/json' }, ' '.repeat(8193), 413, 'PAYLOAD_TOO_LARGE'],
+  ['empty body', { 'content-type': 'application/json' }, '', 400, 'INVALID_REQUEST'],
+  ['malformed JSON', { 'content-type': 'application/json' }, '{"private":"detail"', 400, 'INVALID_REQUEST'],
+]) {
+  test(`POST /api/bets/drafts maps ${name} to sanitized HTTP ${status}`, async () => {
+    const upstream = createFakeUpstream({ sports: realShapedSportsSnapshot() });
+    const app = createApp({ apiToken: API_TOKEN, upstream });
+    const response = await invokeApp(app, {
+      method: 'POST',
+      path: '/api/bets/drafts',
+      headers: {
+        authorization: `Bearer ${API_TOKEN}`,
+        ...headers,
+      },
+      body,
+    });
+
+    assert.equal(response.status, status);
+    assert.equal(response.body.error.code, code);
+    assert.equal(JSON.stringify(response.body).includes('private'), false);
+    assert.equal(upstream.calls.sports.length, 0);
+  });
+}
+
+test('POST /api/bets/drafts rejects invalid draft input before calling upstream', async () => {
+  const upstream = createFakeUpstream({ sports: realShapedSportsSnapshot() });
+  const app = createApp({ apiToken: API_TOKEN, upstream });
+
+  const response = await invokeDraft(app, validDraftInput({ stake: 'private-invalid' }));
+
+  assert.equal(response.status, 400);
+  assert.equal(response.body.error.code, 'INVALID_REQUEST');
+  assert.equal(JSON.stringify(response.body).includes('private-invalid'), false);
+  assert.equal(upstream.calls.sports.length, 0);
+});
+
+for (const [name, sports, input, code] of [
+  ['unavailable event', { events: [], count: 0, truncated: false }, validDraftInput(), 'EVENT_UNAVAILABLE'],
+  ['unavailable selection', realShapedSportsSnapshot({ available: false }), validDraftInput(), 'SELECTION_UNAVAILABLE'],
+  ['excessive odds drift', realShapedSportsSnapshot({ decimalOdds: '2.10' }), validDraftInput(), 'ODDS_DRIFT_EXCEEDED'],
+]) {
+  test(`POST /api/bets/drafts maps ${name} to a sanitized conflict`, async () => {
+    const upstream = createFakeUpstream({ sports });
+    const app = createApp({ apiToken: API_TOKEN, upstream });
+
+    const response = await invokeDraft(app, input);
+
+    assert.equal(response.status, 409);
+    assert.equal(response.body.error.code, code);
+    assert.equal(JSON.stringify(response.body).includes('private'), false);
+    assert.equal(upstream.calls.sports.length, 1);
+  });
+}
+
+test('POST /api/bets/drafts maps a malformed current snapshot to sanitized 502', async () => {
+  const upstream = createFakeUpstream({
+    sports: { events: [], count: 0, truncated: false, private_detail: 'secret' },
+  });
+  const app = createApp({ apiToken: API_TOKEN, upstream });
+
+  const response = await invokeDraft(app);
+
+  assert.equal(response.status, 502);
+  assert.equal(response.body.error.code, 'MALFORMED_CURRENT_SNAPSHOT');
+  assert.equal(JSON.stringify(response.body).includes('secret'), false);
+});
+
+test('POST /api/bets/drafts maps invalid service state to sanitized 500', async () => {
+  const upstream = createFakeUpstream({ sports: realShapedSportsSnapshot() });
+  const app = createApp({
+    apiToken: API_TOKEN,
+    upstream,
+    now: () => new Date('2026-07-19T12:00:00.000Z'),
+    draftId: () => '',
+  });
+
+  const response = await invokeDraft(app);
+
+  assert.equal(response.status, 500);
+  assert.equal(response.body.error.code, 'INTERNAL_ERROR');
+});
+
+test('POST /api/bets/drafts replays one local draft without a second sports read', async () => {
+  let generated = 0;
+  const upstream = createFakeUpstream({ sports: realShapedSportsSnapshot() });
+  const app = createApp({
+    apiToken: API_TOKEN,
+    upstream,
+    now: () => new Date('2026-07-19T12:00:00.000Z'),
+    draftId: () => `draft-replay-${++generated}`,
+  });
+
+  const first = await invokeDraft(app);
+  const second = await invokeDraft(app);
+
+  assert.equal(first.status, 200);
+  assert.deepEqual(second.body.data, first.body.data);
+  assert.equal(generated, 1);
+  assert.equal(upstream.calls.sports.length, 1);
+});
+
+test('POST /api/bets/drafts rejects idempotency conflicts before a second sports read', async () => {
+  const upstream = createFakeUpstream({ sports: realShapedSportsSnapshot() });
+  const app = createApp({
+    apiToken: API_TOKEN,
+    upstream,
+    now: () => new Date('2026-07-19T12:00:00.000Z'),
+  });
+
+  assert.equal((await invokeDraft(app)).status, 200);
+  const conflict = await invokeDraft(app, validDraftInput({ stake: '11.00' }));
+
+  assert.equal(conflict.status, 409);
+  assert.equal(conflict.body.error.code, 'IDEMPOTENCY_CONFLICT');
+  assert.equal(upstream.calls.sports.length, 1);
+});
+
+test('POST /api/bets/drafts bypasses the HTTP sports cache for a fresh snapshot', async () => {
+  const snapshots = [
+    realShapedSportsSnapshot({ decimalOdds: '1.95' }),
+    realShapedSportsSnapshot({ decimalOdds: '1.98' }),
+  ];
+  const calls = [];
+  const upstream = {
+    async getSports(options) {
+      calls.push(options);
+      return snapshots.shift();
+    },
+  };
+  const app = createApp({
+    apiToken: API_TOKEN,
+    upstream,
+    now: () => new Date('2026-07-19T12:00:00.000Z'),
+  });
+  const authorization = { authorization: `Bearer ${API_TOKEN}` };
+
+  const cachedRead = await invokeApp(app, {
+    path: '/api/sports?scope=live&sport=football',
+    headers: authorization,
+  });
+  const draft = await invokeDraft(app);
+
+  assert.equal(cachedRead.body.data.events[0].markets[0].selections[0].decimal_odds, '1.95');
+  assert.equal(draft.body.data.current_odds, '1.98');
+  assert.deepEqual(calls, [
+    { scope: 'live', sport: 'football' },
+    { scope: 'live', sport: 'football' },
+  ]);
+});
+
+for (const [upstreamCode, status] of [
+  [CODES.BROWSER_UNAVAILABLE, 503],
+  [CODES.AUTH_EXPIRED, 502],
+  [CODES.TIMEOUT, 504],
+  [CODES.BAD_RESPONSE, 502],
+  [CODES.SCHEMA_CHANGED, 502],
+]) {
+  test(`POST /api/bets/drafts preserves ${upstreamCode} mapping`, async () => {
+    const upstream = {
+      async getSports() {
+        throw upstreamError(upstreamCode, 'private-upstream-detail');
+      },
+    };
+    const app = createApp({ apiToken: API_TOKEN, upstream });
+
+    const response = await invokeDraft(app);
+
+    assert.equal(response.status, status);
+    assert.equal(response.body.error.code, upstreamCode);
+    assert.equal(JSON.stringify(response.body).includes('private-upstream-detail'), false);
+  });
+}
+
+test('unsupported /api/bets/drafts methods advertise only POST', async () => {
+  const app = createApp({ apiToken: API_TOKEN, upstream: createFakeUpstream() });
+
+  for (const method of ['GET', 'DELETE']) {
+    const response = await invokeApp(app, { method, path: '/api/bets/drafts' });
+    assert.equal(response.status, 405);
+    assert.equal(response.headers.get('allow'), 'POST');
+  }
+});
+
+test('other non-GET routes still advertise only GET', async () => {
+  const app = createApp({ apiToken: API_TOKEN, upstream: createFakeUpstream() });
+
+  const response = await invokeApp(app, {
+    method: 'POST',
+    path: '/api/sports',
+  });
+
+  assert.equal(response.status, 405);
+  assert.equal(response.headers.get('allow'), 'GET');
+});
+
+for (const action of ['submit', 'confirm', 'cancel', 'settle', 'cashout']) {
+  test(`does not expose a ${action} draft route`, async () => {
+    const app = createApp({ apiToken: API_TOKEN, upstream: createFakeUpstream() });
+    const path = `/api/bets/drafts/${action}`;
+
+    const getResponse = await invokeApp(app, { path });
+    const postResponse = await invokeApp(app, { method: 'POST', path });
+
+    assert.equal(getResponse.status, 404);
+    assert.equal(postResponse.status, 405);
+    assert.equal(postResponse.headers.get('allow'), 'GET');
+  });
+}
 
 test('protected API routes reject a missing bearer token', async () => {
   await withServer({ upstream: createFakeUpstream() }, async (baseUrl) => {

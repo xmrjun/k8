@@ -3,6 +3,8 @@
 const { randomUUID } = require('node:crypto');
 
 const { isAuthorized } = require('./auth');
+const { DraftError, createBetDraftService } = require('./bet-drafts');
+const { JsonBodyError, readJsonBody } = require('./json-body');
 const {
   sendError,
   success,
@@ -80,13 +82,72 @@ function sendUpstreamError(response, error, requestId) {
   sendError(response, mapping[0], mapping[1], mapping[2], requestId);
 }
 
+function sendDraftRouteError(response, error, requestId) {
+  if (error instanceof JsonBodyError) {
+    if (error.code === 'UNSUPPORTED_MEDIA_TYPE'
+      || error.code === 'UNSUPPORTED_CHARSET') {
+      sendError(response, 415, error.code, 'Unsupported media type', requestId);
+      return;
+    }
+    if (error.code === 'PAYLOAD_TOO_LARGE') {
+      sendError(response, 413, error.code, 'Payload too large', requestId);
+      return;
+    }
+    if (error.code !== 'INVALID_OPTIONS') {
+      sendError(response, 400, 'INVALID_REQUEST', 'Invalid request', requestId);
+      return;
+    }
+  }
+  if (error instanceof DraftError) {
+    if (error.code === 'INVALID_DRAFT_INPUT') {
+      sendError(response, 400, 'INVALID_REQUEST', 'Invalid request', requestId);
+      return;
+    }
+    if ([
+      'IDEMPOTENCY_CONFLICT',
+      'EVENT_UNAVAILABLE',
+      'SELECTION_UNAVAILABLE',
+      'ODDS_DRIFT_EXCEEDED',
+    ].includes(error.code)) {
+      sendError(response, 409, error.code, 'Draft conflict', requestId);
+      return;
+    }
+    if (error.code === 'MALFORMED_CURRENT_SNAPSHOT') {
+      sendError(
+        response,
+        502,
+        error.code,
+        'Upstream returned a malformed sports snapshot',
+        requestId,
+      );
+      return;
+    }
+  }
+  sendUpstreamError(response, error, requestId);
+}
+
 function createApp({
   apiToken,
   upstream,
   now = () => new Date(),
   requestId = randomUUID,
+  draftId = randomUUID,
 }) {
   const sportsCache = new Map();
+  const draftService = createBetDraftService({
+    upstream,
+    now: () => {
+      try {
+        const milliseconds = Date.prototype.getTime.call(now());
+        return Number.isSafeInteger(milliseconds) && milliseconds >= 0
+          ? milliseconds
+          : Number.NaN;
+      } catch {
+        return Number.NaN;
+      }
+    },
+    idGenerator: draftId,
+  });
 
   return async function app(request, response) {
     const id = requestId();
@@ -95,6 +156,36 @@ function createApp({
       url = new URL(request.url, 'http://localhost');
     } catch {
       sendError(response, 400, 'INVALID_REQUEST', 'Invalid request', id);
+      return;
+    }
+
+    if (url.pathname === '/api/bets/drafts' && request.method === 'POST') {
+      if (!isAuthorized(request.headers.authorization, apiToken)) {
+        unauthorized(response, id);
+        return;
+      }
+      try {
+        if (Array.from(url.searchParams.keys()).length > 0) {
+          sendError(response, 400, 'INVALID_REQUEST', 'Invalid request', id);
+          return;
+        }
+        const fetchedAt = now().toISOString();
+        const input = await readJsonBody(request, { maxBytes: 8192 });
+        const data = await draftService.create(input);
+        success(response, {
+          data,
+          source: SPORTS_SOURCE,
+          fetchedAt,
+          requestId: id,
+        });
+      } catch (error) {
+        sendDraftRouteError(response, error, id);
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/bets/drafts') {
+      methodNotAllowed(response, id, ['POST']);
       return;
     }
 
