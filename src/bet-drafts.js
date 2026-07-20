@@ -35,6 +35,17 @@ const ALLOWED_SCOPES = new Set(['live', 'today', 'early']);
 const ALLOWED_SPORTS = new Set(['football', 'basketball', 'tennis']);
 const DECIMAL_PATTERN = /^\d+(?:\.\d+)?$/;
 const STAKE_PATTERN = /^\d+(?:\.\d{1,2})?$/;
+const CURRENT_DECIMAL_PATTERN = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
+const CURRENT_EVENT_ID_PATTERN = /^\d{1,32}$/;
+const CURRENT_LINE_PATTERN = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:\/(?:0|[1-9]\d*)(?:\.\d+)?)?$/;
+const CURRENT_PERIODS = new Set(['full_time', 'first_half']);
+const CURRENT_MARKET_SELECTIONS = Object.freeze({
+  '1x2': new Set(['home', 'draw', 'away']),
+  moneyline: new Set(['home', 'away']),
+  handicap: new Set(['home', 'away']),
+  total: new Set(['over', 'under']),
+  odd_even: new Set(['odd', 'even']),
+});
 const MAX_DECIMAL_LENGTH = 64;
 
 class DraftError extends Error {
@@ -372,53 +383,160 @@ function isRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function hasFields(value, fields) {
+  return fields.every((field) => Object.hasOwn(value, field));
+}
+
+function isNormalizedText(value) {
+  return typeof value === 'string'
+    && value.length > 0
+    && value === value.trim();
+}
+
+function isPositiveCurrentDecimal(value) {
+  return typeof value === 'string'
+    && value.length <= MAX_DECIMAL_LENGTH
+    && CURRENT_DECIMAL_PATTERN.test(value)
+    && !/^0(?:\.0*)?$/.test(value);
+}
+
+function validCurrentScore(score) {
+  if (score === null) return true;
+  return isRecord(score)
+    && hasFields(score, ['home', 'away'])
+    && Number.isSafeInteger(score.home)
+    && score.home >= 0
+    && score.home <= 999
+    && Number.isSafeInteger(score.away)
+    && score.away >= 0
+    && score.away <= 999;
+}
+
+function validateCurrentSelection(selection, eventId, market) {
+  if (!isRecord(selection)
+    || !hasFields(selection, ['selection_key', 'name', 'odds_format', 'available'])
+    || !CURRENT_MARKET_SELECTIONS[market.type].has(selection.name)
+    || selection.selection_key !== `${eventId}:${market.period}:${market.type}:${selection.name}`
+    || selection.odds_format !== 'hong_kong'
+    || typeof selection.available !== 'boolean') {
+    malformedCurrentSnapshot();
+  }
+
+  const lineMarket = market.type === 'handicap' || market.type === 'total';
+  if (lineMarket) {
+    if (!Object.hasOwn(selection, 'line')
+      || typeof selection.line !== 'string'
+      || !CURRENT_LINE_PATTERN.test(selection.line)) {
+      malformedCurrentSnapshot();
+    }
+  } else if (Object.hasOwn(selection, 'line')) {
+    malformedCurrentSnapshot();
+  }
+
+  if (!selection.available) {
+    if (Object.hasOwn(selection, 'display_odds')
+      || Object.hasOwn(selection, 'decimal_odds')) {
+      malformedCurrentSnapshot();
+    }
+    return undefined;
+  }
+
+  if (!hasFields(selection, ['display_odds', 'decimal_odds'])
+    || !isPositiveCurrentDecimal(selection.display_odds)
+    || !isPositiveCurrentDecimal(selection.decimal_odds)) {
+    malformedCurrentSnapshot();
+  }
+  return canonicalDecimal(selection.decimal_odds);
+}
+
+function validateCurrentEvent(event, normalizedInput) {
+  if (!isRecord(event)
+    || !hasFields(event, [
+      'event_id',
+      'sport',
+      'scope',
+      'league',
+      'home',
+      'away',
+      'score',
+      'clock',
+      'markets',
+    ])
+    || typeof event.event_id !== 'string'
+    || !CURRENT_EVENT_ID_PATTERN.test(event.event_id)
+    || event.sport !== normalizedInput.sport
+    || event.scope !== normalizedInput.scope
+    || !isNormalizedText(event.league)
+    || !isNormalizedText(event.home)
+    || !isNormalizedText(event.away)
+    || !validCurrentScore(event.score)
+    || !(event.clock === null || isNormalizedText(event.clock))
+    || !Array.isArray(event.markets)) {
+    malformedCurrentSnapshot();
+  }
+
+  const selections = [];
+  const marketKeys = new Set();
+  for (const market of event.markets) {
+    if (!isRecord(market)
+      || !hasFields(market, ['period', 'type', 'selections'])
+      || !CURRENT_PERIODS.has(market.period)
+      || !Object.hasOwn(CURRENT_MARKET_SELECTIONS, market.type)
+      || !Array.isArray(market.selections)
+      || market.selections.length === 0) {
+      malformedCurrentSnapshot();
+    }
+    const marketKey = `${market.period}:${market.type}`;
+    if (marketKeys.has(marketKey)) malformedCurrentSnapshot();
+    marketKeys.add(marketKey);
+
+    for (const selection of market.selections) {
+      selections.push({
+        available: selection.available,
+        currentOdds: validateCurrentSelection(selection, event.event_id, market),
+        selectionKey: selection.selection_key,
+      });
+    }
+  }
+  return selections;
+}
+
 function currentSelectionOdds(snapshot, normalizedInput) {
   try {
-    if (!isRecord(snapshot) || !Array.isArray(snapshot.events)) {
+    let currentSnapshot;
+    try {
+      currentSnapshot = cloneDraftData(snapshot);
+    } catch {
+      malformedCurrentSnapshot();
+    }
+    if (!hasFields(currentSnapshot, ['events', 'count', 'truncated'])
+      || !Array.isArray(currentSnapshot.events)
+      || !Number.isSafeInteger(currentSnapshot.count)
+      || currentSnapshot.count < 0
+      || currentSnapshot.count > 500
+      || currentSnapshot.count !== currentSnapshot.events.length
+      || typeof currentSnapshot.truncated !== 'boolean'
+      || (currentSnapshot.truncated && currentSnapshot.count !== 500)) {
       malformedCurrentSnapshot();
     }
 
     const matchingEvents = [];
-    for (const event of snapshot.events) {
-      if (!isRecord(event)
-        || typeof event.event_id !== 'string'
-        || !Array.isArray(event.markets)) {
-        malformedCurrentSnapshot();
+    for (const event of currentSnapshot.events) {
+      const selections = validateCurrentEvent(event, normalizedInput);
+      if (event.event_id === normalizedInput.event_id) {
+        matchingEvents.push({ event, selections });
       }
-      if (event.event_id === normalizedInput.event_id) matchingEvents.push(event);
     }
     if (matchingEvents.length !== 1) throw new DraftError(EVENT_UNAVAILABLE);
 
-    const matchingSelections = [];
-    for (const market of matchingEvents[0].markets) {
-      if (!isRecord(market) || !Array.isArray(market.selections)) {
-        malformedCurrentSnapshot();
-      }
-      for (const selection of market.selections) {
-        if (!isRecord(selection)
-          || typeof selection.selection_key !== 'string'
-          || typeof selection.available !== 'boolean') {
-          malformedCurrentSnapshot();
-        }
-
-        let decimalOdds;
-        if (selection.available) {
-          try {
-            decimalOdds = requireDecimal(selection.decimal_odds, { positive: true });
-          } catch {
-            malformedCurrentSnapshot();
-          }
-        }
-        if (selection.selection_key === normalizedInput.selection_key) {
-          matchingSelections.push({ available: selection.available, decimalOdds });
-        }
-      }
-    }
+    const matchingSelections = matchingEvents[0].selections.filter(
+      (selection) => selection.selectionKey === normalizedInput.selection_key,
+    );
 
     if (matchingSelections.length !== 1 || !matchingSelections[0].available) {
       throw new DraftError(SELECTION_UNAVAILABLE);
     }
-    return matchingSelections[0].decimalOdds;
+    return matchingSelections[0].currentOdds;
   } catch (error) {
     if (error instanceof DraftError
       && [

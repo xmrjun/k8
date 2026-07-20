@@ -552,24 +552,38 @@ test('sanitizes revoked Proxy draft store options', () => {
 
 function sportsSnapshot({
   eventId = '900000001',
+  eventScope = 'live',
+  eventSport = 'football',
   selectionKey = '900000001:full_time:1x2:home',
+  selectionName = 'home',
   decimalOdds = '1.98',
+  displayOdds = '0.98',
   available = true,
 } = {}) {
+  const selection = {
+    selection_key: selectionKey,
+    name: selectionName,
+    odds_format: 'hong_kong',
+    available,
+  };
+  if (available) {
+    selection.display_odds = displayOdds;
+    selection.decimal_odds = decimalOdds;
+  }
   return {
     events: [{
       event_id: eventId,
-      sport: 'football',
-      scope: 'live',
+      sport: eventSport,
+      scope: eventScope,
+      league: 'Premier League',
+      home: 'Home FC',
+      away: 'Away FC',
+      score: { home: 1, away: 0 },
+      clock: '67:12',
       markets: [{
         period: 'full_time',
         type: '1x2',
-        selections: [{
-          selection_key: selectionKey,
-          decimal_odds: decimalOdds,
-          available,
-          display_odds: '0.98',
-        }],
+        selections: [selection],
       }],
     }],
     count: 1,
@@ -676,7 +690,7 @@ test('rejects current odds drift above the configured maximum', async () => {
 
 test('treats canonically equal odds as unchanged', async () => {
   const { service } = testService({
-    snapshot: sportsSnapshot({ decimalOdds: '01.9500' }),
+    snapshot: sportsSnapshot({ decimalOdds: '1.9500' }),
   });
 
   const draft = await service.create(validInput());
@@ -701,21 +715,28 @@ test('calculates projected gross return from current odds with exact half-up rou
 });
 
 test('fails closed when the requested event is missing', async () => {
-  const { service } = testService({ snapshot: { events: [] } });
+  const { service } = testService({
+    snapshot: { events: [], count: 0, truncated: false },
+  });
 
   await assert.rejects(service.create(validInput()), assertDraftError('EVENT_UNAVAILABLE'));
 });
 
 test('fails closed when the requested event appears more than once', async () => {
   const event = sportsSnapshot().events[0];
-  const { service } = testService({ snapshot: { events: [event, event] } });
+  const { service } = testService({
+    snapshot: { events: [event, structuredClone(event)], count: 2, truncated: false },
+  });
 
   await assert.rejects(service.create(validInput()), assertDraftError('EVENT_UNAVAILABLE'));
 });
 
 test('fails closed when the requested selection is missing', async () => {
   const { service } = testService({
-    snapshot: sportsSnapshot({ selectionKey: '900000001:full_time:1x2:away' }),
+    snapshot: sportsSnapshot({
+      selectionKey: '900000001:full_time:1x2:away',
+      selectionName: 'away',
+    }),
   });
 
   await assert.rejects(service.create(validInput()), assertDraftError('SELECTION_UNAVAILABLE'));
@@ -723,14 +744,13 @@ test('fails closed when the requested selection is missing', async () => {
 
 test('fails closed when the requested selection appears more than once in its event', async () => {
   const snapshot = sportsSnapshot();
-  snapshot.events[0].markets.push({
-    period: 'full_time',
-    type: 'duplicate-test',
-    selections: [{
-      selection_key: validInput().selection_key,
-      decimal_odds: '1.98',
-      available: true,
-    }],
+  snapshot.events[0].markets[0].selections.push({
+    selection_key: validInput().selection_key,
+    name: 'home',
+    display_odds: '0.98',
+    odds_format: 'hong_kong',
+    decimal_odds: '1.98',
+    available: true,
   });
   const { service } = testService({ snapshot });
 
@@ -742,6 +762,191 @@ test('fails closed when the requested selection is locked', async () => {
   const { service } = testService({ snapshot });
 
   await assert.rejects(service.create(validInput()), assertDraftError('SELECTION_UNAVAILABLE'));
+});
+
+test('rejects a matching event from a different scope', async () => {
+  const { service } = testService({
+    snapshot: sportsSnapshot({ eventScope: 'early' }),
+  });
+
+  await assert.rejects(
+    service.create(validInput()),
+    assertDraftError('MALFORMED_CURRENT_SNAPSHOT'),
+  );
+});
+
+test('rejects a matching event from a different sport', async () => {
+  const { service } = testService({
+    snapshot: sportsSnapshot({ eventSport: 'tennis' }),
+  });
+
+  await assert.rejects(
+    service.create(validInput()),
+    assertDraftError('MALFORMED_CURRENT_SNAPSHOT'),
+  );
+});
+
+for (const [name, mutate] of [
+  ['missing count', (snapshot) => { delete snapshot.count; }],
+  ['missing truncated flag', (snapshot) => { delete snapshot.truncated; }],
+  ['count unequal to events length', (snapshot) => { snapshot.count = 0; }],
+  ['non-boolean truncated flag', (snapshot) => { snapshot.truncated = 'false'; }],
+  ['truncated true below the reader limit', (snapshot) => { snapshot.truncated = true; }],
+]) {
+  test(`rejects snapshot metadata with ${name}`, async () => {
+    const snapshot = sportsSnapshot();
+    mutate(snapshot);
+    const { service } = testService({ snapshot });
+
+    await assert.rejects(
+      service.create(validInput()),
+      assertDraftError('MALFORMED_CURRENT_SNAPSHOT'),
+    );
+  });
+}
+
+for (const [name, mutate] of [
+  ['missing event league', (snapshot) => { delete snapshot.events[0].league; }],
+  ['non-numeric event id', (snapshot) => { snapshot.events[0].event_id = 'event-1'; }],
+  ['empty event home', (snapshot) => { snapshot.events[0].home = ''; }],
+  ['invalid event score', (snapshot) => { snapshot.events[0].score.home = -1; }],
+  ['invalid event clock', (snapshot) => { snapshot.events[0].clock = ''; }],
+  ['missing market period', (snapshot) => { delete snapshot.events[0].markets[0].period; }],
+  ['unknown market type', (snapshot) => { snapshot.events[0].markets[0].type = 'winner'; }],
+  ['missing selection name', (snapshot) => {
+    delete snapshot.events[0].markets[0].selections[0].name;
+  }],
+  ['missing selection odds format', (snapshot) => {
+    delete snapshot.events[0].markets[0].selections[0].odds_format;
+  }],
+  ['missing selection display odds', (snapshot) => {
+    delete snapshot.events[0].markets[0].selections[0].display_odds;
+  }],
+  ['malformed selection display odds', (snapshot) => {
+    snapshot.events[0].markets[0].selections[0].display_odds = 'private-odds';
+  }],
+]) {
+  test(`rejects real-shaped snapshot with ${name}`, async () => {
+    const snapshot = sportsSnapshot();
+    mutate(snapshot);
+    const { service } = testService({ snapshot });
+
+    await assert.rejects(
+      service.create(validInput()),
+      assertDraftError('MALFORMED_CURRENT_SNAPSHOT'),
+    );
+  });
+}
+
+test('rejects a selection key inconsistent with its event and market identity', async () => {
+  const { service } = testService({
+    snapshot: sportsSnapshot({ selectionName: 'away' }),
+  });
+
+  await assert.rejects(
+    service.create(validInput()),
+    assertDraftError('MALFORMED_CURRENT_SNAPSHOT'),
+  );
+});
+
+test('rejects a selection name unsupported by its market type', async () => {
+  const snapshot = sportsSnapshot({
+    selectionKey: '900000001:full_time:1x2:over',
+    selectionName: 'over',
+  });
+  const { service } = testService({ snapshot });
+
+  await assert.rejects(
+    service.create(validInput({ selection_key: '900000001:full_time:1x2:over' })),
+    assertDraftError('MALFORMED_CURRENT_SNAPSHOT'),
+  );
+});
+
+test('rejects a line market selection without its required line', async () => {
+  const snapshot = sportsSnapshot({
+    selectionKey: '900000001:full_time:handicap:home',
+  });
+  snapshot.events[0].markets[0].type = 'handicap';
+  const { service } = testService({ snapshot });
+
+  await assert.rejects(
+    service.create(validInput({ selection_key: '900000001:full_time:handicap:home' })),
+    assertDraftError('MALFORMED_CURRENT_SNAPSHOT'),
+  );
+});
+
+test('accepts a complete line-market selection from the normalized reader shape', async () => {
+  const snapshot = sportsSnapshot({
+    selectionKey: '900000001:full_time:total:over',
+    selectionName: 'over',
+  });
+  snapshot.events[0].markets[0].type = 'total';
+  snapshot.events[0].markets[0].selections[0].line = '2.5/3';
+  const { service } = testService({ snapshot });
+
+  const draft = await service.create(validInput({
+    selection_key: '900000001:full_time:total:over',
+  }));
+
+  assert.equal(draft.selection_key, '900000001:full_time:total:over');
+});
+
+test('validates malformed nonmatching events before selecting the requested event', async () => {
+  const snapshot = sportsSnapshot();
+  const otherEvent = structuredClone(snapshot.events[0]);
+  otherEvent.event_id = '900000002';
+  otherEvent.markets[0].selections[0].selection_key = '900000002:full_time:1x2:home';
+  delete otherEvent.home;
+  snapshot.events.push(otherEvent);
+  snapshot.count = 2;
+  const { service } = testService({ snapshot });
+
+  await assert.rejects(
+    service.create(validInput()),
+    assertDraftError('MALFORMED_CURRENT_SNAPSHOT'),
+  );
+});
+
+test('sanitizes an accessor-backed current snapshot without invoking its getter', async () => {
+  const snapshot = sportsSnapshot();
+  let getterCalled = false;
+  Object.defineProperty(snapshot.events[0], 'league', {
+    enumerable: true,
+    get() {
+      getterCalled = true;
+      throw new Error('private-snapshot-detail');
+    },
+  });
+  const { service } = testService({ snapshot });
+
+  await assert.rejects(
+    service.create(validInput()),
+    assertDraftError('MALFORMED_CURRENT_SNAPSHOT'),
+  );
+  assert.equal(getterCalled, false);
+});
+
+test('rejects a non-plain current snapshot with the sanitized snapshot error', async () => {
+  const snapshot = Object.assign(Object.create({ inherited: true }), sportsSnapshot());
+  const { service } = testService({ snapshot });
+
+  await assert.rejects(
+    service.create(validInput()),
+    assertDraftError('MALFORMED_CURRENT_SNAPSHOT'),
+  );
+});
+
+test('sanitizes a revoked Proxy nested in the current snapshot', async () => {
+  const snapshot = sportsSnapshot();
+  const { proxy, revoke } = Proxy.revocable({}, {});
+  revoke();
+  snapshot.events[0] = proxy;
+  const { service } = testService({ snapshot });
+
+  await assert.rejects(
+    service.create(validInput()),
+    assertDraftError('MALFORMED_CURRENT_SNAPSHOT'),
+  );
 });
 
 for (const [name, snapshot] of [
