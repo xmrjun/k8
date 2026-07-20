@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
 
 const {
   DraftError,
@@ -591,6 +592,41 @@ function sportsSnapshot({
   };
 }
 
+function sportsEvent(eventId) {
+  const event = structuredClone(sportsSnapshot().events[0]);
+  event.event_id = eventId;
+  for (const market of event.markets) {
+    for (const selection of market.selections) {
+      const parts = selection.selection_key.split(':');
+      parts[0] = eventId;
+      selection.selection_key = parts.join(':');
+    }
+  }
+  return event;
+}
+
+function sportsMarket(eventId, period, type) {
+  const selectionNames = {
+    '1x2': 'home',
+    moneyline: 'home',
+    handicap: 'home',
+    total: 'over',
+    odd_even: 'odd',
+  };
+  const name = selectionNames[type];
+  const selection = {
+    selection_key: `${eventId}:${period}:${type}:${name}`,
+    name,
+    display_odds: '0.98',
+    odds_format: 'hong_kong',
+    decimal_odds: '1.98',
+    available: true,
+  };
+  if (type === 'handicap') selection.line = '0';
+  if (type === 'total') selection.line = '2.5';
+  return { period, type, selections: [selection] };
+}
+
 function testService({
   snapshot = sportsSnapshot(),
   initialNow = Date.parse('2026-07-20T01:02:03.000Z'),
@@ -944,6 +980,49 @@ test('validates malformed nonmatching events before selecting the requested even
   );
 });
 
+test('rejects a duplicated nonmatching event id', async () => {
+  const snapshot = sportsSnapshot();
+  const otherEvent = sportsEvent('900000002');
+  snapshot.events.push(otherEvent, structuredClone(otherEvent));
+  snapshot.count = 3;
+  const { service } = testService({ snapshot });
+
+  await assert.rejects(
+    service.create(validInput()),
+    assertDraftError('MALFORMED_CURRENT_SNAPSHOT'),
+  );
+});
+
+test('rejects a duplicated selection key in a nonmatching event', async () => {
+  const snapshot = sportsSnapshot();
+  const otherEvent = sportsEvent('900000002');
+  otherEvent.markets[0].selections.push(
+    structuredClone(otherEvent.markets[0].selections[0]),
+  );
+  snapshot.events.push(otherEvent);
+  snapshot.count = 2;
+  const { service } = testService({ snapshot });
+
+  await assert.rejects(
+    service.create(validInput()),
+    assertDraftError('MALFORMED_CURRENT_SNAPSHOT'),
+  );
+});
+
+test('rejects a duplicated market identity in a nonmatching event', async () => {
+  const snapshot = sportsSnapshot();
+  const otherEvent = sportsEvent('900000002');
+  otherEvent.markets.push(structuredClone(otherEvent.markets[0]));
+  snapshot.events.push(otherEvent);
+  snapshot.count = 2;
+  const { service } = testService({ snapshot });
+
+  await assert.rejects(
+    service.create(validInput()),
+    assertDraftError('MALFORMED_CURRENT_SNAPSHOT'),
+  );
+});
+
 test('sanitizes an accessor-backed current snapshot without invoking its getter', async () => {
   const snapshot = sportsSnapshot();
   let getterCalled = false;
@@ -985,6 +1064,123 @@ test('sanitizes a revoked Proxy nested in the current snapshot', async () => {
     assertDraftError('MALFORMED_CURRENT_SNAPSHOT'),
   );
 });
+
+test('rejects 501 events before traversing the oversized snapshot', async () => {
+  const snapshot = sportsSnapshot();
+  snapshot.events = Array.from(
+    { length: 501 },
+    (_, index) => sportsEvent(String(900000001 + index)),
+  );
+  snapshot.count = snapshot.events.length;
+  const { service } = testService({ snapshot });
+  const startedAt = performance.now();
+
+  await assert.rejects(
+    service.create(validInput()),
+    assertDraftError('MALFORMED_CURRENT_SNAPSHOT'),
+  );
+  assert.ok(performance.now() - startedAt < 100);
+});
+
+test('rejects an event containing more than eight markets', async () => {
+  const snapshot = sportsSnapshot();
+  snapshot.events[0].markets = [
+    sportsMarket('900000001', 'full_time', '1x2'),
+    sportsMarket('900000001', 'full_time', 'moneyline'),
+    sportsMarket('900000001', 'full_time', 'handicap'),
+    sportsMarket('900000001', 'full_time', 'total'),
+    sportsMarket('900000001', 'full_time', 'odd_even'),
+    sportsMarket('900000001', 'first_half', '1x2'),
+    sportsMarket('900000001', 'first_half', 'moneyline'),
+    sportsMarket('900000001', 'first_half', 'handicap'),
+    sportsMarket('900000001', 'first_half', 'total'),
+  ];
+  const { service } = testService({ snapshot });
+
+  await assert.rejects(
+    service.create(validInput()),
+    assertDraftError('MALFORMED_CURRENT_SNAPSHOT'),
+  );
+});
+
+test('rejects a market containing more than three selections', async () => {
+  const snapshot = sportsSnapshot();
+  snapshot.events[0].markets[0].selections.push(
+    {
+      ...structuredClone(snapshot.events[0].markets[0].selections[0]),
+      selection_key: '900000001:full_time:1x2:draw',
+      name: 'draw',
+    },
+    {
+      ...structuredClone(snapshot.events[0].markets[0].selections[0]),
+      selection_key: '900000001:full_time:1x2:away',
+      name: 'away',
+    },
+    {
+      ...structuredClone(snapshot.events[0].markets[0].selections[0]),
+      selection_key: '900000001:full_time:1x2:away',
+      name: 'away',
+    },
+  );
+  const { service } = testService({ snapshot });
+
+  await assert.rejects(
+    service.create(validInput()),
+    assertDraftError('MALFORMED_CURRENT_SNAPSHOT'),
+  );
+});
+
+test('rejects a huge unknown snapshot field without traversing its contents', async () => {
+  const snapshot = sportsSnapshot();
+  snapshot.irrelevant = { rows: new Array(100_000).fill('private') };
+  const { service } = testService({ snapshot });
+  const startedAt = performance.now();
+
+  await assert.rejects(
+    service.create(validInput()),
+    assertDraftError('MALFORMED_CURRENT_SNAPSHOT'),
+  );
+  assert.ok(performance.now() - startedAt < 100);
+});
+
+test('does not inspect a Proxy stored in an unknown snapshot field', async () => {
+  const snapshot = sportsSnapshot();
+  let proxyInspected = false;
+  snapshot.irrelevant = new Proxy({}, {
+    getPrototypeOf() {
+      proxyInspected = true;
+      throw new Error('private-unknown-field');
+    },
+  });
+  const { service } = testService({ snapshot });
+
+  await assert.rejects(
+    service.create(validInput()),
+    assertDraftError('MALFORMED_CURRENT_SNAPSHOT'),
+  );
+  assert.equal(proxyInspected, false);
+});
+
+for (const [name, mutate] of [
+  ['event', (snapshot) => { snapshot.events[0].unexpected = 'value'; }],
+  ['score', (snapshot) => { snapshot.events[0].score.unexpected = 1; }],
+  ['market', (snapshot) => { snapshot.events[0].markets[0].unexpected = 'value'; }],
+  ['selection', (snapshot) => {
+    snapshot.events[0].markets[0].selections[0].unexpected = 'value';
+  }],
+  ['oversized event text', (snapshot) => { snapshot.events[0].league = 'x'.repeat(501); }],
+]) {
+  test(`rejects an unknown or unbounded ${name} snapshot field`, async () => {
+    const snapshot = sportsSnapshot();
+    mutate(snapshot);
+    const { service } = testService({ snapshot });
+
+    await assert.rejects(
+      service.create(validInput()),
+      assertDraftError('MALFORMED_CURRENT_SNAPSHOT'),
+    );
+  });
+}
 
 for (const [name, snapshot] of [
   ['missing events array', {}],
@@ -1121,19 +1317,105 @@ test('rejects accessor-backed service options without invoking getters', () => {
   assert.equal(getterCalled, false);
 });
 
-test('accepts an upstream whose getSports method is prototype-backed', async () => {
+test('rejects an upstream whose getSports method is prototype-backed', () => {
   class SportsUpstream {
     async getSports() {
       return sportsSnapshot();
     }
   }
-  const service = createBetDraftService({
-    upstream: new SportsUpstream(),
-    now: () => 0,
-    idGenerator: () => 'draft-1',
+
+  assert.throws(
+    () => createBetDraftService({
+      upstream: new SportsUpstream(),
+      now: () => 0,
+      idGenerator: () => 'draft-1',
+    }),
+    assertDraftError('INVALID_DRAFT_SERVICE_OPTIONS'),
+  );
+});
+
+test('ignores a getSports function injected through Object.prototype', () => {
+  Object.defineProperty(Object.prototype, 'getSports', {
+    configurable: true,
+    value: async () => sportsSnapshot(),
+  });
+  try {
+    assert.throws(
+      () => createBetDraftService({
+        upstream: {},
+        now: () => 0,
+        idGenerator: () => 'draft-1',
+      }),
+      assertDraftError('INVALID_DRAFT_SERVICE_OPTIONS'),
+    );
+  } finally {
+    delete Object.prototype.getSports;
+  }
+});
+
+test('rejects an accessor-backed upstream without invoking getSports', () => {
+  let getterCalled = false;
+  const upstream = {};
+  Object.defineProperty(upstream, 'getSports', {
+    enumerable: true,
+    get() {
+      getterCalled = true;
+      throw new Error('private-upstream-getter');
+    },
   });
 
-  assert.equal((await service.create(validInput())).draft_id, 'draft-1');
+  assert.throws(
+    () => createBetDraftService({
+      upstream,
+      now: () => 0,
+      idGenerator: () => 'draft-1',
+    }),
+    assertDraftError('INVALID_DRAFT_SERVICE_OPTIONS'),
+  );
+  assert.equal(getterCalled, false);
+});
+
+test('sanitizes an upstream Proxy descriptor failure', () => {
+  const upstream = new Proxy({}, {
+    getOwnPropertyDescriptor() {
+      throw new Error('private-upstream-proxy');
+    },
+  });
+
+  assert.throws(
+    () => createBetDraftService({
+      upstream,
+      now: () => 0,
+      idGenerator: () => 'draft-1',
+    }),
+    assertDraftError('INVALID_DRAFT_SERVICE_OPTIONS'),
+  );
+});
+
+test('rejects a self-referential upstream prototype Proxy within 500ms', () => {
+  const modulePath = require.resolve('../src/bet-drafts');
+  const script = `
+    const { createBetDraftService } = require(${JSON.stringify(modulePath)});
+    let upstream;
+    upstream = new Proxy({}, { getPrototypeOf: () => upstream });
+    try {
+      createBetDraftService({
+        upstream,
+        now: () => 0,
+        idGenerator: () => 'draft-1',
+      });
+      process.exit(2);
+    } catch (error) {
+      process.exit(error?.code === 'INVALID_DRAFT_SERVICE_OPTIONS' ? 0 : 3);
+    }
+  `;
+
+  const result = spawnSync(process.execPath, ['-e', script], {
+    encoding: 'utf8',
+    timeout: 500,
+  });
+
+  assert.equal(result.status, 0, result.error?.code || result.stderr);
 });
 
 test('sanitizes an invalid clock value returned after the upstream read', async () => {

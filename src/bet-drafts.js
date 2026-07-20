@@ -46,6 +46,39 @@ const CURRENT_MARKET_SELECTIONS = Object.freeze({
   total: new Set(['over', 'under']),
   odd_even: new Set(['odd', 'even']),
 });
+const CURRENT_SNAPSHOT_FIELDS = Object.freeze(['events', 'count', 'truncated']);
+const CURRENT_EVENT_FIELDS = Object.freeze([
+  'event_id',
+  'sport',
+  'scope',
+  'league',
+  'home',
+  'away',
+  'score',
+  'clock',
+  'markets',
+]);
+const CURRENT_SCORE_FIELDS = Object.freeze(['home', 'away']);
+const CURRENT_MARKET_FIELDS = Object.freeze(['period', 'type', 'selections']);
+const CURRENT_SELECTION_FIELDS = Object.freeze([
+  'selection_key',
+  'name',
+  'line',
+  'display_odds',
+  'odds_format',
+  'decimal_odds',
+  'available',
+]);
+const CURRENT_SELECTION_REQUIRED_FIELDS = Object.freeze([
+  'selection_key',
+  'name',
+  'odds_format',
+  'available',
+]);
+const MAX_CURRENT_EVENTS = 500;
+const MAX_CURRENT_MARKETS = 8;
+const MAX_CURRENT_SELECTIONS = 3;
+const MAX_CURRENT_TEXT_LENGTH = 500;
 const MAX_DECIMAL_LENGTH = 64;
 
 class DraftError extends Error {
@@ -392,13 +425,37 @@ function isRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function hasFields(value, fields) {
-  return fields.every((field) => Object.hasOwn(value, field));
+function readCurrentRecord(value, allowedFields, requiredFields = allowedFields) {
+  if (!isRecord(value) || Object.getPrototypeOf(value) !== Object.prototype) {
+    malformedCurrentSnapshot();
+  }
+  const allowed = new Set(allowedFields);
+  const keys = Reflect.ownKeys(value);
+  if (keys.length > allowedFields.length
+    || keys.some((key) => typeof key !== 'string' || !allowed.has(key))) {
+    malformedCurrentSnapshot();
+  }
+
+  const values = {};
+  for (const key of keys) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor
+      || !descriptor.enumerable
+      || !Object.hasOwn(descriptor, 'value')) {
+      malformedCurrentSnapshot();
+    }
+    values[key] = descriptor.value;
+  }
+  if (requiredFields.some((field) => !Object.hasOwn(values, field))) {
+    malformedCurrentSnapshot();
+  }
+  return values;
 }
 
 function isNormalizedText(value) {
   return typeof value === 'string'
     && value.length > 0
+    && value.length <= MAX_CURRENT_TEXT_LENGTH
     && value === value.trim();
 }
 
@@ -412,132 +469,181 @@ function isPositiveCurrentDecimal(value) {
   return isCurrentDecimal(value) && !/^0(?:\.0*)?$/.test(value);
 }
 
-function validCurrentScore(score) {
-  if (score === null) return true;
-  return isRecord(score)
-    && hasFields(score, ['home', 'away'])
-    && Number.isSafeInteger(score.home)
-    && score.home >= 0
-    && score.home <= 999
-    && Number.isSafeInteger(score.away)
-    && score.away >= 0
-    && score.away <= 999;
+function readCurrentArray(value, { minimum = 0, maximum }) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
+    malformedCurrentSnapshot();
+  }
+  const lengthDescriptor = Object.getOwnPropertyDescriptor(value, 'length');
+  const length = lengthDescriptor?.value;
+  if (!lengthDescriptor
+    || !Object.hasOwn(lengthDescriptor, 'value')
+    || !Number.isSafeInteger(length)
+    || length < minimum
+    || length > maximum) {
+    malformedCurrentSnapshot();
+  }
+
+  const keys = Reflect.ownKeys(value);
+  if (keys.length !== length + 1
+    || keys.some((key) => key !== 'length'
+      && (typeof key !== 'string'
+        || !/^(?:0|[1-9]\d*)$/.test(key)
+        || Number(key) >= length))) {
+    malformedCurrentSnapshot();
+  }
+
+  const values = new Array(length);
+  for (let index = 0; index < length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor
+      || !descriptor.enumerable
+      || !Object.hasOwn(descriptor, 'value')) {
+      malformedCurrentSnapshot();
+    }
+    values[index] = descriptor.value;
+  }
+  return values;
+}
+
+function validateCurrentScore(score) {
+  if (score === null) return;
+  const values = readCurrentRecord(score, CURRENT_SCORE_FIELDS);
+  if (!Number.isSafeInteger(values.home)
+    || values.home < 0
+    || values.home > 999
+    || !Number.isSafeInteger(values.away)
+    || values.away < 0
+    || values.away > 999) {
+    malformedCurrentSnapshot();
+  }
 }
 
 function validateCurrentSelection(selection, eventId, market) {
-  if (!isRecord(selection)
-    || !hasFields(selection, ['selection_key', 'name', 'odds_format', 'available'])
-    || !CURRENT_MARKET_SELECTIONS[market.type].has(selection.name)
-    || selection.selection_key !== `${eventId}:${market.period}:${market.type}:${selection.name}`
-    || selection.odds_format !== 'hong_kong'
-    || typeof selection.available !== 'boolean') {
+  const values = readCurrentRecord(
+    selection,
+    CURRENT_SELECTION_FIELDS,
+    CURRENT_SELECTION_REQUIRED_FIELDS,
+  );
+  if (!isNormalizedText(values.selection_key)
+    || !CURRENT_MARKET_SELECTIONS[market.type].has(values.name)
+    || values.selection_key !== `${eventId}:${market.period}:${market.type}:${values.name}`
+    || values.odds_format !== 'hong_kong'
+    || typeof values.available !== 'boolean') {
     malformedCurrentSnapshot();
   }
 
   const lineMarket = market.type === 'handicap' || market.type === 'total';
   if (lineMarket) {
-    if (!Object.hasOwn(selection, 'line')
-      || typeof selection.line !== 'string'
-      || !CURRENT_LINE_PATTERN.test(selection.line)) {
+    if (!Object.hasOwn(values, 'line')
+      || typeof values.line !== 'string'
+      || values.line.length > MAX_DECIMAL_LENGTH
+      || !CURRENT_LINE_PATTERN.test(values.line)) {
       malformedCurrentSnapshot();
     }
-  } else if (Object.hasOwn(selection, 'line')) {
+  } else if (Object.hasOwn(values, 'line')) {
     malformedCurrentSnapshot();
   }
 
-  if (!selection.available) {
-    if (Object.hasOwn(selection, 'display_odds')
-      || Object.hasOwn(selection, 'decimal_odds')) {
+  if (!values.available) {
+    if (Object.hasOwn(values, 'display_odds')
+      || Object.hasOwn(values, 'decimal_odds')) {
       malformedCurrentSnapshot();
     }
-    return undefined;
+    return {
+      available: false,
+      currentOdds: undefined,
+      selectionKey: values.selection_key,
+    };
   }
 
-  if (!hasFields(selection, ['display_odds', 'decimal_odds'])
-    || !isCurrentDecimal(selection.display_odds)
-    || !isPositiveCurrentDecimal(selection.decimal_odds)
-    || !decimalDifferenceEquals(selection.decimal_odds, selection.display_odds, '1')) {
+  if (!Object.hasOwn(values, 'display_odds')
+    || !Object.hasOwn(values, 'decimal_odds')
+    || !isCurrentDecimal(values.display_odds)
+    || !isPositiveCurrentDecimal(values.decimal_odds)
+    || !decimalDifferenceEquals(values.decimal_odds, values.display_odds, '1')) {
     malformedCurrentSnapshot();
   }
-  return canonicalDecimal(selection.decimal_odds);
+  return {
+    available: true,
+    currentOdds: canonicalDecimal(values.decimal_odds),
+    selectionKey: values.selection_key,
+  };
 }
 
 function validateCurrentEvent(event, normalizedInput) {
-  if (!isRecord(event)
-    || !hasFields(event, [
-      'event_id',
-      'sport',
-      'scope',
-      'league',
-      'home',
-      'away',
-      'score',
-      'clock',
-      'markets',
-    ])
-    || typeof event.event_id !== 'string'
-    || !CURRENT_EVENT_ID_PATTERN.test(event.event_id)
-    || event.sport !== normalizedInput.sport
-    || event.scope !== normalizedInput.scope
-    || !isNormalizedText(event.league)
-    || !isNormalizedText(event.home)
-    || !isNormalizedText(event.away)
-    || !validCurrentScore(event.score)
-    || !(event.clock === null || isNormalizedText(event.clock))
-    || !Array.isArray(event.markets)) {
+  const values = readCurrentRecord(event, CURRENT_EVENT_FIELDS);
+  if (typeof values.event_id !== 'string'
+    || !CURRENT_EVENT_ID_PATTERN.test(values.event_id)
+    || values.sport !== normalizedInput.sport
+    || values.scope !== normalizedInput.scope
+    || !isNormalizedText(values.league)
+    || !isNormalizedText(values.home)
+    || !isNormalizedText(values.away)
+    || !(values.clock === null || isNormalizedText(values.clock))) {
     malformedCurrentSnapshot();
   }
+  validateCurrentScore(values.score);
+  const markets = readCurrentArray(values.markets, { maximum: MAX_CURRENT_MARKETS });
 
   const selections = [];
   const marketKeys = new Set();
-  for (const market of event.markets) {
-    if (!isRecord(market)
-      || !hasFields(market, ['period', 'type', 'selections'])
-      || !CURRENT_PERIODS.has(market.period)
-      || !Object.hasOwn(CURRENT_MARKET_SELECTIONS, market.type)
-      || !Array.isArray(market.selections)
-      || market.selections.length === 0) {
+  for (const market of markets) {
+    const marketValues = readCurrentRecord(market, CURRENT_MARKET_FIELDS);
+    if (!CURRENT_PERIODS.has(marketValues.period)
+      || !Object.hasOwn(CURRENT_MARKET_SELECTIONS, marketValues.type)) {
       malformedCurrentSnapshot();
     }
-    const marketKey = `${market.period}:${market.type}`;
+    const marketKey = `${marketValues.period}:${marketValues.type}`;
     if (marketKeys.has(marketKey)) malformedCurrentSnapshot();
     marketKeys.add(marketKey);
 
-    for (const selection of market.selections) {
-      selections.push({
-        available: selection.available,
-        currentOdds: validateCurrentSelection(selection, event.event_id, market),
-        selectionKey: selection.selection_key,
-      });
+    const marketSelections = readCurrentArray(marketValues.selections, {
+      minimum: 1,
+      maximum: MAX_CURRENT_SELECTIONS,
+    });
+    for (const selection of marketSelections) {
+      selections.push(validateCurrentSelection(
+        selection,
+        values.event_id,
+        marketValues,
+      ));
     }
   }
-  return selections;
+  return { eventId: values.event_id, selections };
 }
 
 function currentSelectionOdds(snapshot, normalizedInput) {
   try {
-    let currentSnapshot;
-    try {
-      currentSnapshot = cloneDraftData(snapshot);
-    } catch {
-      malformedCurrentSnapshot();
-    }
-    if (!hasFields(currentSnapshot, ['events', 'count', 'truncated'])
-      || !Array.isArray(currentSnapshot.events)
-      || !Number.isSafeInteger(currentSnapshot.count)
+    const currentSnapshot = readCurrentRecord(snapshot, CURRENT_SNAPSHOT_FIELDS);
+    const events = readCurrentArray(currentSnapshot.events, { maximum: MAX_CURRENT_EVENTS });
+    if (!Number.isSafeInteger(currentSnapshot.count)
       || currentSnapshot.count < 0
-      || currentSnapshot.count > 500
-      || currentSnapshot.count !== currentSnapshot.events.length
+      || currentSnapshot.count !== events.length
       || typeof currentSnapshot.truncated !== 'boolean'
-      || (currentSnapshot.truncated && currentSnapshot.count !== 500)) {
+      || (currentSnapshot.truncated && currentSnapshot.count !== MAX_CURRENT_EVENTS)) {
       malformedCurrentSnapshot();
     }
 
     const matchingEvents = [];
-    for (const event of currentSnapshot.events) {
-      const selections = validateCurrentEvent(event, normalizedInput);
-      if (event.event_id === normalizedInput.event_id) {
-        matchingEvents.push({ event, selections });
+    const eventIds = new Set();
+    const selectionKeys = new Set();
+    for (const event of events) {
+      const validatedEvent = validateCurrentEvent(event, normalizedInput);
+      if (eventIds.has(validatedEvent.eventId)
+        && validatedEvent.eventId !== normalizedInput.event_id) {
+        malformedCurrentSnapshot();
+      }
+      eventIds.add(validatedEvent.eventId);
+
+      for (const selection of validatedEvent.selections) {
+        if (selectionKeys.has(selection.selectionKey)
+          && selection.selectionKey !== normalizedInput.selection_key) {
+          malformedCurrentSnapshot();
+        }
+        selectionKeys.add(selection.selectionKey);
+      }
+      if (validatedEvent.eventId === normalizedInput.event_id) {
+        matchingEvents.push(validatedEvent);
       }
     }
     if (matchingEvents.length !== 1) throw new DraftError(EVENT_UNAVAILABLE);
@@ -599,11 +705,7 @@ function createBetDraftService(options) {
   let getSportsDescriptor;
   try {
     if (!isRecord(upstream)) invalidServiceOptions();
-    let owner = upstream;
-    while (owner !== null && !getSportsDescriptor) {
-      getSportsDescriptor = Object.getOwnPropertyDescriptor(owner, 'getSports');
-      owner = Object.getPrototypeOf(owner);
-    }
+    getSportsDescriptor = Object.getOwnPropertyDescriptor(upstream, 'getSports');
   } catch {
     invalidServiceOptions();
   }
