@@ -169,13 +169,12 @@ function createApp({
           sendError(response, 400, 'INVALID_REQUEST', 'Invalid request', id);
           return;
         }
-        const fetchedAt = now().toISOString();
         const input = await readJsonBody(request, { maxBytes: 8192 });
         const data = await draftService.create(input);
         success(response, {
           data,
           source: SPORTS_SOURCE,
-          fetchedAt,
+          fetchedAt: data.created_at,
           requestId: id,
         });
       } catch (error) {

@@ -209,6 +209,22 @@ test('POST /api/bets/drafts returns a local manual-confirmation draft envelope',
   assert.deepEqual(upstream.calls.sports, [{ scope: 'live', sport: 'football' }]);
 });
 
+test('POST /api/bets/drafts succeeds over a real HTTP server', async () => {
+  const upstream = createFakeUpstream({ sports: realShapedSportsSnapshot() });
+  await withServer({
+    upstream,
+    draftId: () => 'draft-integration-1',
+  }, async (baseUrl) => {
+    const response = await request(baseUrl, '/api/bets/drafts', draftRequest());
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.data.draft_id, 'draft-integration-1');
+    assert.equal(response.body.data.state, 'ready_for_manual_confirmation');
+    assert.equal(response.body.fetched_at, response.body.data.created_at);
+  });
+  assert.equal(upstream.calls.sports.length, 1);
+});
+
 test('POST /api/bets/drafts authenticates before validating or reading the body', async () => {
   let reads = 0;
   const body = new Readable({
@@ -365,6 +381,26 @@ test('POST /api/bets/drafts replays one local draft without a second sports read
   assert.equal(first.status, 200);
   assert.deepEqual(second.body.data, first.body.data);
   assert.equal(generated, 1);
+  assert.equal(upstream.calls.sports.length, 1);
+});
+
+test('idempotent replay keeps fetched_at at the original draft verification time', async () => {
+  let milliseconds = Date.parse('2026-07-19T12:00:00.000Z');
+  const upstream = createFakeUpstream({ sports: realShapedSportsSnapshot() });
+  const app = createApp({
+    apiToken: API_TOKEN,
+    upstream,
+    now: () => new Date(milliseconds),
+    draftId: () => 'draft-stable-time',
+  });
+
+  const first = await invokeDraft(app);
+  milliseconds += 30_000;
+  const replay = await invokeDraft(app);
+
+  assert.equal(first.body.fetched_at, first.body.data.created_at);
+  assert.equal(replay.body.fetched_at, first.body.data.created_at);
+  assert.deepEqual(replay.body.data, first.body.data);
   assert.equal(upstream.calls.sports.length, 1);
 });
 

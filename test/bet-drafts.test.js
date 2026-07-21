@@ -1266,6 +1266,117 @@ test('idempotency conflict occurs before a second upstream read', async () => {
   assert.equal(calls.length, 1);
 });
 
+test('coalesces concurrent identical requests into one upstream read and one promise', async () => {
+  let releaseUpstream;
+  const upstreamPending = new Promise((resolve) => {
+    releaseUpstream = resolve;
+  });
+  const { service, calls, generatedIds } = testService({
+    getSports: async () => {
+      await upstreamPending;
+      return sportsSnapshot();
+    },
+  });
+
+  const firstPending = service.create(validInput());
+  const secondPending = service.create(validInput({
+    stake: '010.0',
+    expected_odds: '01.950',
+    max_odds_drift: '00.050',
+  }));
+  try {
+    assert.equal(calls.length, 1);
+    assert.strictEqual(secondPending, firstPending);
+  } finally {
+    releaseUpstream();
+  }
+
+  const [first, second] = await Promise.all([firstPending, secondPending]);
+  assert.strictEqual(second, first);
+  assert.equal(generatedIds(), 1);
+});
+
+test('rejects a concurrent idempotency conflict before another upstream read', async () => {
+  let releaseUpstream;
+  const upstreamPending = new Promise((resolve) => {
+    releaseUpstream = resolve;
+  });
+  const { service, calls } = testService({
+    getSports: async () => {
+      await upstreamPending;
+      return sportsSnapshot();
+    },
+  });
+
+  const firstPending = service.create(validInput());
+  const conflictPending = service.create(validInput({ stake: '11.00' }));
+  await assert.rejects(conflictPending, assertDraftError('IDEMPOTENCY_CONFLICT'));
+  assert.equal(calls.length, 1);
+  releaseUpstream();
+  await firstPending;
+});
+
+test('cleans a failed in-flight request so the same input can retry', async () => {
+  const upstreamFailure = new Error('private-transient-detail');
+  let attempts = 0;
+  const { service, calls } = testService({
+    getSports: async () => {
+      attempts += 1;
+      if (attempts === 1) throw upstreamFailure;
+      return sportsSnapshot();
+    },
+  });
+
+  await assert.rejects(service.create(validInput()), (error) => error === upstreamFailure);
+  const draft = await service.create(validInput());
+
+  assert.equal(draft.state, 'ready_for_manual_confirmation');
+  assert.equal(calls.length, 2);
+});
+
+test('coalesces a concurrent burst into one upstream read', async () => {
+  let releaseUpstream;
+  const upstreamPending = new Promise((resolve) => {
+    releaseUpstream = resolve;
+  });
+  const { service, calls } = testService({
+    getSports: async () => {
+      await upstreamPending;
+      return sportsSnapshot();
+    },
+  });
+
+  const pending = Array.from({ length: 50 }, () => service.create(validInput()));
+  assert.equal(pending.every((promise) => promise === pending[0]), true);
+  assert.equal(calls.length, 1);
+  releaseUpstream();
+  const drafts = await Promise.all(pending);
+  assert.equal(drafts.every((draft) => draft === drafts[0]), true);
+});
+
+test('bounds distinct in-flight requests by the configured draft capacity', async () => {
+  const releases = [];
+  const { service, calls } = testService({
+    maxDrafts: 2,
+    getSports: () => new Promise((resolve) => {
+      releases.push(() => resolve(sportsSnapshot()));
+    }),
+  });
+
+  const firstPending = service.create(validInput({ idempotency_key: 'in-flight-1' }));
+  const secondPending = service.create(validInput({ idempotency_key: 'in-flight-2' }));
+  const thirdPending = service.create(validInput({ idempotency_key: 'in-flight-3' }));
+  const callCount = calls.length;
+  for (const release of releases) release();
+
+  assert.equal(callCount, 2);
+  await assert.rejects(
+    thirdPending,
+    assertDraftError('DRAFT_CAPACITY_EXCEEDED'),
+  );
+  await Promise.all([firstPending, secondPending]);
+});
+
 test('rejects unsafe service construction options with a fixed sanitized error', () => {
   const validOptions = {
     upstream: { async getSports() { return sportsSnapshot(); } },

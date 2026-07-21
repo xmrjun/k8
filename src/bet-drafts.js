@@ -9,6 +9,7 @@ const MALFORMED_CURRENT_SNAPSHOT = 'MALFORMED_CURRENT_SNAPSHOT';
 const EVENT_UNAVAILABLE = 'EVENT_UNAVAILABLE';
 const SELECTION_UNAVAILABLE = 'SELECTION_UNAVAILABLE';
 const ODDS_DRIFT_EXCEEDED = 'ODDS_DRIFT_EXCEEDED';
+const DRAFT_CAPACITY_EXCEEDED = 'DRAFT_CAPACITY_EXCEEDED';
 const DEFAULT_DRAFT_TTL_MS = 120_000;
 const DEFAULT_MAX_DRAFTS = 1000;
 const DRAFT_STORE_OPTION_FIELDS = Object.freeze([
@@ -731,6 +732,7 @@ function createBetDraftService(options) {
     ttlMs,
     maxDrafts,
   });
+  const inFlight = new Map();
 
   function serviceTimestamp() {
     let timestamp;
@@ -756,11 +758,7 @@ function createBetDraftService(options) {
     }
   }
 
-  async function create(rawInput) {
-    const normalizedInput = normalizeDraftInput(rawInput);
-    const replay = store.findReplay(normalizedInput);
-    if (replay) return replay;
-
+  async function createFresh(normalizedInput) {
     const snapshot = await getSports.call(upstream, {
       scope: normalizedInput.scope,
       sport: normalizedInput.sport,
@@ -795,6 +793,40 @@ function createBetDraftService(options) {
     } finally {
       saveTimestamp = undefined;
     }
+  }
+
+  function create(rawInput) {
+    let normalizedInput;
+    let replay;
+    try {
+      normalizedInput = normalizeDraftInput(rawInput);
+      replay = store.findReplay(normalizedInput);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    if (replay) return Promise.resolve(replay);
+
+    const fingerprint = draftFingerprint(normalizedInput);
+    const pending = inFlight.get(normalizedInput.idempotency_key);
+    if (pending) {
+      if (pending.fingerprint !== fingerprint) {
+        return Promise.reject(new DraftError(IDEMPOTENCY_CONFLICT));
+      }
+      return pending.promise;
+    }
+    if (inFlight.size >= maxDrafts) {
+      return Promise.reject(new DraftError(DRAFT_CAPACITY_EXCEEDED));
+    }
+
+    const promise = createFresh(normalizedInput);
+    inFlight.set(normalizedInput.idempotency_key, { fingerprint, promise });
+    const cleanup = () => {
+      if (inFlight.get(normalizedInput.idempotency_key)?.promise === promise) {
+        inFlight.delete(normalizedInput.idempotency_key);
+      }
+    };
+    void promise.then(cleanup, cleanup);
+    return promise;
   }
 
   return Object.freeze({ create });

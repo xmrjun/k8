@@ -44,6 +44,15 @@ test('accepts case-insensitive JSON media type with optional UTF-8 charset', asy
   }
 });
 
+test('accepts a leading-zero decimal content length', async () => {
+  const request = bodyStream(['{}'], {
+    'content-type': 'application/json',
+    'content-length': '0002',
+  });
+
+  assert.deepEqual(await readJsonBody(request), {});
+});
+
 for (const [name, headers, code] of [
   ['missing content type', {}, 'UNSUPPORTED_MEDIA_TYPE'],
   ['another media type', { 'content-type': 'text/plain' }, 'UNSUPPORTED_MEDIA_TYPE'],
@@ -51,6 +60,9 @@ for (const [name, headers, code] of [
   ['unknown media parameter', { 'content-type': 'application/json; version=1' }, 'UNSUPPORTED_MEDIA_TYPE'],
   ['empty content length', { 'content-type': 'application/json', 'content-length': '' }, 'INVALID_CONTENT_LENGTH'],
   ['negative content length', { 'content-type': 'application/json', 'content-length': '-1' }, 'INVALID_CONTENT_LENGTH'],
+  ['signed content length', { 'content-type': 'application/json', 'content-length': '+2' }, 'INVALID_CONTENT_LENGTH'],
+  ['comma-separated content length', { 'content-type': 'application/json', 'content-length': '2,2' }, 'INVALID_CONTENT_LENGTH'],
+  ['whitespace-padded content length', { 'content-type': 'application/json', 'content-length': ' 2' }, 'INVALID_CONTENT_LENGTH'],
   ['non-numeric content length', { 'content-type': 'application/json', 'content-length': '12x' }, 'INVALID_CONTENT_LENGTH'],
   ['conflicting content length', { 'content-type': 'application/json', 'content-length': ['2', '3'] }, 'INVALID_CONTENT_LENGTH'],
   ['oversized declared length', { 'content-type': 'application/json', 'content-length': '8193' }, 'PAYLOAD_TOO_LARGE'],

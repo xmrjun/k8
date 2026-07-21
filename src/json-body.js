@@ -66,12 +66,15 @@ function validateContentLength(value, maxBytes) {
   if (value === undefined) return;
   const values = Array.isArray(value) ? value : [value];
   if (values.length === 0
-    || values.some((item) => typeof item !== 'string' || !/^(?:0|[1-9]\d*)$/.test(item))
-    || new Set(values).size !== 1) {
+    || values.some((item) => typeof item !== 'string' || !/^\d+$/.test(item))) {
     fail('INVALID_CONTENT_LENGTH');
   }
-  const length = Number(values[0]);
-  if (!Number.isSafeInteger(length)) fail('INVALID_CONTENT_LENGTH');
+  const lengths = values.map(Number);
+  if (lengths.some((length) => !Number.isSafeInteger(length))
+    || new Set(lengths).size !== 1) {
+    fail('INVALID_CONTENT_LENGTH');
+  }
+  const [length] = lengths;
   if (length > maxBytes) fail('PAYLOAD_TOO_LARGE');
 }
 
