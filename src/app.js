@@ -82,19 +82,21 @@ function sendUpstreamError(response, error, requestId) {
   sendError(response, mapping[0], mapping[1], mapping[2], requestId);
 }
 
-function sendDraftRouteError(response, error, requestId) {
+function sendDraftRouteError(response, error, requestId, request) {
   if (error instanceof JsonBodyError) {
+    const headers = error.closeConnection ? { connection: 'close' } : undefined;
+    if (error.closeConnection) request.pause?.();
     if (error.code === 'UNSUPPORTED_MEDIA_TYPE'
       || error.code === 'UNSUPPORTED_CHARSET') {
-      sendError(response, 415, error.code, 'Unsupported media type', requestId);
+      sendError(response, 415, error.code, 'Unsupported media type', requestId, headers);
       return;
     }
     if (error.code === 'PAYLOAD_TOO_LARGE') {
-      sendError(response, 413, error.code, 'Payload too large', requestId);
+      sendError(response, 413, error.code, 'Payload too large', requestId, headers);
       return;
     }
     if (error.code !== 'INVALID_OPTIONS') {
-      sendError(response, 400, 'INVALID_REQUEST', 'Invalid request', requestId);
+      sendError(response, 400, 'INVALID_REQUEST', 'Invalid request', requestId, headers);
       return;
     }
   }
@@ -171,12 +173,21 @@ function createApp({
 
     if (url.pathname === '/api/bets/drafts' && request.method === 'POST') {
       if (!isAuthorized(request.headers.authorization, apiToken)) {
-        unauthorized(response, id);
+        request.pause?.();
+        unauthorized(response, id, { connection: 'close' });
         return;
       }
       try {
         if (Array.from(url.searchParams.keys()).length > 0) {
-          sendError(response, 400, 'INVALID_REQUEST', 'Invalid request', id);
+          request.pause?.();
+          sendError(
+            response,
+            400,
+            'INVALID_REQUEST',
+            'Invalid request',
+            id,
+            { connection: 'close' },
+          );
           return;
         }
         const input = await readJsonBody(request, { maxBytes: 8192 });
@@ -188,7 +199,7 @@ function createApp({
           requestId: id,
         });
       } catch (error) {
-        sendDraftRouteError(response, error, id);
+        sendDraftRouteError(response, error, id, request);
       }
       return;
     }

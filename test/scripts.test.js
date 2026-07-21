@@ -358,6 +358,7 @@ test('package exposes native syntax checks for production JavaScript and JXA', (
   const packageJson = JSON.parse(projectFile('package.json'));
 
   assert.match(packageJson.scripts.check, /node --check src\/server\.js/);
+  assert.match(packageJson.scripts.check, /node --check src\/bet-drafts\.js/);
   assert.match(packageJson.scripts.check, /node --check src\/realtime\/ws-feed-server\.js/);
   assert.equal(packageJson.scripts['smoke:ws'], 'node --env-file=.env.local scripts/ws-smoke-test.mjs');
   assert.match(packageJson.scripts.check, /node --check src\/browser\/apple-events-gateway\.js/);

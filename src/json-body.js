@@ -3,18 +3,19 @@
 const { isProxy } = require('node:util/types');
 
 class JsonBodyError extends Error {
-  constructor(code) {
+  constructor(code, closeConnection = false) {
     super(code);
     this.name = 'JsonBodyError';
     this.code = code;
+    this.closeConnection = closeConnection;
   }
 }
 
 const DEFAULT_MAX_BYTES = 8192;
 const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true });
 
-function fail(code) {
-  throw new JsonBodyError(code);
+function fail(code, closeConnection = false) {
+  throw new JsonBodyError(code, closeConnection);
 }
 
 function readMaximum(options) {
@@ -51,15 +52,15 @@ function readMaximum(options) {
 }
 
 function validateContentType(value) {
-  if (typeof value !== 'string') fail('UNSUPPORTED_MEDIA_TYPE');
+  if (typeof value !== 'string') fail('UNSUPPORTED_MEDIA_TYPE', true);
   if (/^\s*application\/json\s*$/i.test(value)) return;
   if (/^\s*application\/json\s*;\s*charset\s*=\s*(?:utf-8|"utf-8")\s*$/i.test(value)) {
     return;
   }
   if (/^\s*application\/json\s*;\s*charset\s*=/i.test(value)) {
-    fail('UNSUPPORTED_CHARSET');
+    fail('UNSUPPORTED_CHARSET', true);
   }
-  fail('UNSUPPORTED_MEDIA_TYPE');
+  fail('UNSUPPORTED_MEDIA_TYPE', true);
 }
 
 function validateContentLength(value, maxBytes) {
@@ -67,28 +68,15 @@ function validateContentLength(value, maxBytes) {
   const values = Array.isArray(value) ? value : [value];
   if (values.length === 0
     || values.some((item) => typeof item !== 'string' || !/^\d+$/.test(item))) {
-    fail('INVALID_CONTENT_LENGTH');
+    fail('INVALID_CONTENT_LENGTH', true);
   }
   const lengths = values.map(Number);
   if (lengths.some((length) => !Number.isSafeInteger(length))
     || new Set(lengths).size !== 1) {
-    fail('INVALID_CONTENT_LENGTH');
+    fail('INVALID_CONTENT_LENGTH', true);
   }
   const [length] = lengths;
-  if (length > maxBytes) fail('PAYLOAD_TOO_LARGE');
-}
-
-function drainAfterFailure(request) {
-  const ignoreError = () => {};
-  const cleanup = () => {
-    request.off('error', ignoreError);
-    request.off('end', cleanup);
-    request.off('close', cleanup);
-  };
-  request.on('error', ignoreError);
-  request.once('end', cleanup);
-  request.once('close', cleanup);
-  request.resume?.();
+  if (length > maxBytes) fail('PAYLOAD_TOO_LARGE', true);
 }
 
 function readBoundedStream(request, maxBytes) {
@@ -110,13 +98,13 @@ function readBoundedStream(request, maxBytes) {
       request.off('close', onClose);
     }
 
-    function rejectWith(code, drain = false) {
+    function rejectWith(code, closeConnection = false) {
       if (settled) return;
       settled = true;
       chunks.length = 0;
       cleanup();
-      if (drain) drainAfterFailure(request);
-      reject(new JsonBodyError(code));
+      if (closeConnection) request.pause?.();
+      reject(new JsonBodyError(code, closeConnection));
     }
 
     function onData(value) {

@@ -26,8 +26,9 @@ function sendError(response, statusCode, code, message, requestId, headers) {
   }, requestId, headers);
 }
 
-function unauthorized(response, requestId) {
+function unauthorized(response, requestId, additionalHeaders = {}) {
   sendError(response, 401, 'UNAUTHORIZED', 'Unauthorized', requestId, {
+    ...additionalHeaders,
     'www-authenticate': 'Bearer realm="k8-api"',
   });
 }

@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
+const net = require('node:net');
 const { Readable } = require('node:stream');
 
 const { createApp } = require('../src/app');
@@ -40,6 +41,39 @@ async function request(baseUrl, path, options = {}) {
     headers: response.headers,
     body: await response.json(),
   };
+}
+
+function rawRequestWithOpenBody(baseUrl, requestHead, partialBody, timeoutMs = 2000) {
+  const url = new URL(baseUrl);
+  return new Promise((resolve, reject) => {
+    let response = '';
+    let socketError;
+    let settled = false;
+    const socket = net.createConnection({
+      host: url.hostname,
+      port: Number(url.port),
+    });
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      reject(new Error('Timed out waiting for rejected draft socket to close'));
+    }, timeoutMs);
+
+    socket.setEncoding('utf8');
+    socket.on('data', (chunk) => { response += chunk; });
+    socket.once('error', (error) => { socketError = error; });
+    socket.once('close', () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (response.length > 0) resolve(response);
+      else reject(socketError || new Error('Rejected draft socket closed without a response'));
+    });
+    socket.once('connect', () => {
+      socket.write(`${requestHead}\r\n\r\n${partialBody}`);
+    });
+  });
 }
 
 async function invokeApp(app, {
@@ -207,6 +241,7 @@ test('POST /api/bets/drafts returns a local manual-confirmation draft envelope',
     request_id: 'request-test',
   });
   assert.deepEqual(upstream.calls.sports, [{ scope: 'live', sport: 'football' }]);
+  assert.equal(response.headers.get('connection'), null);
 });
 
 test('POST /api/bets/drafts succeeds over a real HTTP server', async () => {
@@ -223,6 +258,54 @@ test('POST /api/bets/drafts succeeds over a real HTTP server', async () => {
     assert.equal(response.body.fetched_at, response.body.data.created_at);
   });
   assert.equal(upstream.calls.sports.length, 1);
+});
+
+test('rejected draft auth closes a real socket without waiting for its open body', async () => {
+  const upstream = createFakeUpstream({ sports: realShapedSportsSnapshot() });
+  await withServer({ upstream }, async (baseUrl) => {
+    const response = await rawRequestWithOpenBody(
+      baseUrl,
+      [
+        'POST /api/bets/drafts HTTP/1.1',
+        'Host: 127.0.0.1',
+        'Content-Type: application/json',
+        'Content-Length: 1000000',
+        'Connection: keep-alive',
+      ].join('\r\n'),
+      '{"private":"partial-and-still-open',
+    );
+
+    assert.match(response, /^HTTP\/1\.1 401 /);
+    assert.match(response, /\r\nconnection: close\r\n/i);
+    assert.match(response, /\r\nwww-authenticate: Bearer realm="k8-api"\r\n/i);
+    assert.match(response, /"code":"UNAUTHORIZED"/);
+    assert.equal(response.includes('partial-and-still-open'), false);
+  });
+  assert.equal(upstream.calls.sports.length, 0);
+});
+
+test('streamed draft overflow closes a real socket without draining the open body', async () => {
+  const upstream = createFakeUpstream({ sports: realShapedSportsSnapshot() });
+  await withServer({ upstream }, async (baseUrl) => {
+    const oversizedChunk = ' '.repeat(8193);
+    const response = await rawRequestWithOpenBody(
+      baseUrl,
+      [
+        'POST /api/bets/drafts HTTP/1.1',
+        'Host: 127.0.0.1',
+        `Authorization: Bearer ${API_TOKEN}`,
+        'Content-Type: application/json',
+        'Transfer-Encoding: chunked',
+        'Connection: keep-alive',
+      ].join('\r\n'),
+      `${oversizedChunk.length.toString(16)}\r\n${oversizedChunk}\r\n`,
+    );
+
+    assert.match(response, /^HTTP\/1\.1 413 /);
+    assert.match(response, /\r\nconnection: close\r\n/i);
+    assert.match(response, /"code":"PAYLOAD_TOO_LARGE"/);
+  });
+  assert.equal(upstream.calls.sports.length, 0);
 });
 
 test('POST /api/bets/drafts authenticates before validating or reading the body', async () => {
@@ -246,6 +329,38 @@ test('POST /api/bets/drafts authenticates before validating or reading the body'
 
   assert.equal(response.status, 401);
   assert.equal(response.body.error.code, 'UNAUTHORIZED');
+  assert.equal(response.headers.get('connection'), 'close');
+  assert.equal(response.headers.get('www-authenticate'), 'Bearer realm="k8-api"');
+  assert.equal(reads, 0);
+  assert.equal(upstream.calls.sports.length, 0);
+});
+
+test('POST /api/bets/drafts closes an invalid-auth request without reading its body', async () => {
+  let reads = 0;
+  const body = new Readable({
+    read() {
+      reads += 1;
+      this.push('{"private":"invalid-auth"}');
+      this.push(null);
+    },
+  });
+  const upstream = createFakeUpstream({ sports: realShapedSportsSnapshot() });
+  const app = createApp({ apiToken: API_TOKEN, upstream });
+
+  const response = await invokeApp(app, {
+    method: 'POST',
+    path: '/api/bets/drafts',
+    headers: {
+      authorization: 'Bearer invalid-private-token',
+      'content-type': 'application/json',
+    },
+    body,
+  });
+
+  assert.equal(response.status, 401);
+  assert.equal(response.headers.get('connection'), 'close');
+  assert.equal(response.headers.get('www-authenticate'), 'Bearer realm="k8-api"');
+  assert.equal(JSON.stringify(response.body).includes('invalid-private-token'), false);
   assert.equal(reads, 0);
   assert.equal(upstream.calls.sports.length, 0);
 });
@@ -274,18 +389,19 @@ test('POST /api/bets/drafts rejects query parameters without reading or calling 
 
   assert.equal(response.status, 400);
   assert.equal(response.body.error.code, 'INVALID_REQUEST');
+  assert.equal(response.headers.get('connection'), 'close');
   assert.equal(reads, 0);
   assert.equal(upstream.calls.sports.length, 0);
 });
 
-for (const [name, headers, body, status, code] of [
-  ['missing content type', {}, '{}', 415, 'UNSUPPORTED_MEDIA_TYPE'],
-  ['unsupported charset', { 'content-type': 'application/json; charset=utf-16' }, '{}', 415, 'UNSUPPORTED_CHARSET'],
-  ['invalid content length', { 'content-type': 'application/json', 'content-length': '-1' }, '{}', 400, 'INVALID_REQUEST'],
-  ['oversized declared body', { 'content-type': 'application/json', 'content-length': '8193' }, '{}', 413, 'PAYLOAD_TOO_LARGE'],
-  ['oversized streamed body', { 'content-type': 'application/json' }, ' '.repeat(8193), 413, 'PAYLOAD_TOO_LARGE'],
-  ['empty body', { 'content-type': 'application/json' }, '', 400, 'INVALID_REQUEST'],
-  ['malformed JSON', { 'content-type': 'application/json' }, '{"private":"detail"', 400, 'INVALID_REQUEST'],
+for (const [name, headers, body, status, code, closeConnection] of [
+  ['missing content type', {}, '{}', 415, 'UNSUPPORTED_MEDIA_TYPE', true],
+  ['unsupported charset', { 'content-type': 'application/json; charset=utf-16' }, '{}', 415, 'UNSUPPORTED_CHARSET', true],
+  ['invalid content length', { 'content-type': 'application/json', 'content-length': '-1' }, '{}', 400, 'INVALID_REQUEST', true],
+  ['oversized declared body', { 'content-type': 'application/json', 'content-length': '8193' }, '{}', 413, 'PAYLOAD_TOO_LARGE', true],
+  ['oversized streamed body', { 'content-type': 'application/json' }, ' '.repeat(8193), 413, 'PAYLOAD_TOO_LARGE', true],
+  ['empty body', { 'content-type': 'application/json' }, '', 400, 'INVALID_REQUEST', false],
+  ['malformed JSON', { 'content-type': 'application/json' }, '{"private":"detail"', 400, 'INVALID_REQUEST', false],
 ]) {
   test(`POST /api/bets/drafts maps ${name} to sanitized HTTP ${status}`, async () => {
     const upstream = createFakeUpstream({ sports: realShapedSportsSnapshot() });
@@ -302,6 +418,10 @@ for (const [name, headers, body, status, code] of [
 
     assert.equal(response.status, status);
     assert.equal(response.body.error.code, code);
+    assert.equal(
+      response.headers.get('connection'),
+      closeConnection ? 'close' : null,
+    );
     assert.equal(JSON.stringify(response.body).includes('private'), false);
     assert.equal(upstream.calls.sports.length, 0);
   });

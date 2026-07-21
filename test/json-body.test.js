@@ -15,11 +15,12 @@ function bodyStream(chunks, headers = { 'content-type': 'application/json' }) {
   return request;
 }
 
-function assertBodyError(code) {
+function assertBodyError(code, { closeConnection } = {}) {
   return (error) => error instanceof JsonBodyError
     && error.name === 'JsonBodyError'
     && error.code === code
     && error.message === code
+    && (closeConnection === undefined || error.closeConnection === closeConnection)
     && !Object.hasOwn(error, 'body');
 }
 
@@ -78,7 +79,10 @@ for (const [name, headers, code] of [
     });
     request.headers = headers;
 
-    await assert.rejects(readJsonBody(request), assertBodyError(code));
+    await assert.rejects(
+      readJsonBody(request),
+      assertBodyError(code, { closeConnection: true }),
+    );
     assert.equal(reads, 0);
   });
 }
@@ -90,16 +94,26 @@ test('accepts a streamed body exactly at the configured byte limit', async () =>
   assert.equal(await readJsonBody(bodyStream([json])), JSON.parse(json));
 });
 
-test('rejects an oversized streamed body and drains or closes the stream safely', async () => {
-  const request = bodyStream([
-    Buffer.alloc(4096, 0x20),
-    Buffer.alloc(4097, 0x20),
-    'private-body-detail',
-  ]);
+test('rejects an oversized stream without resuming or draining later chunks', async () => {
+  const request = new Readable({ read() {} });
+  request.headers = { 'content-type': 'application/json' };
+  const pending = readJsonBody(request);
+  request.push(Buffer.alloc(8193, 0x20));
 
-  await assert.rejects(readJsonBody(request), assertBodyError('PAYLOAD_TOO_LARGE'));
+  await assert.rejects(
+    pending,
+    assertBodyError('PAYLOAD_TOO_LARGE', { closeConnection: true }),
+  );
+  assert.equal(request.readableFlowing, false);
+  for (const event of ['data', 'end', 'aborted', 'error', 'close']) {
+    assert.equal(request.listenerCount(event), 0);
+  }
+
+  const later = Buffer.from('private-body-detail');
+  request.push(later);
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(request.readableEnded || request.destroyed, true);
+  assert.equal(request.readableLength, later.length);
+  request.destroy();
 });
 
 for (const [name, chunks, code] of [
