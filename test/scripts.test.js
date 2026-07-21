@@ -13,6 +13,15 @@ function projectFile(name) {
   return fs.readFileSync(path.join(projectRoot, name), 'utf8');
 }
 
+function markdownTableHasStatusCodeRow(markdown, status, code) {
+  return markdown.split(/\r?\n/).some((row) => {
+    const cells = row.split('|').slice(1, -1).map((cell) => cell.trim());
+    return cells.length >= 2
+      && cells[0] === `\`${status}\``
+      && cells[1].includes(`\`${code}\``);
+  });
+}
+
 async function importScript(name) {
   return import(pathToFileURL(path.join(projectRoot, 'scripts', name)).href);
 }
@@ -227,6 +236,15 @@ test('operations docs describe the dedicated Chrome realtime data path', () => {
   assert.match(operations, /只读/s);
 });
 
+test('documentation error matcher requires status and code in the same table row', () => {
+  const splitRows = [
+    '| `400` | `SOME_OTHER_CODE` |',
+    '| `999` | `INVALID_REQUEST` |',
+  ].join('\n');
+
+  assert.equal(markdownTableHasStatusCodeRow(splitRows, 400, 'INVALID_REQUEST'), false);
+});
+
 test('manual bet draft docs define the complete safe handoff contract', () => {
   const readme = projectFile('README.md');
   const operations = projectFile('docs/operations.md');
@@ -289,7 +307,7 @@ test('manual bet draft docs define the complete safe handoff contract', () => {
   assert.match(readme, /ready_for_manual_confirmation.*current_odds.*created_at.*expires_at/s);
   assert.match(readme, /fetched_at.*实际校验时间.*重放.*原始/s);
   assert.match(readme, /IM 体育页面.*手动.*最终确认/s);
-  assert.match(readme, /永远不会.*API.*页面点击.*提交.*确认.*取消.*结算.*兑现/s);
+  assert.match(readme, /只读.*选择.*scope.*sport.*筛选.*绝不点击.*赔率.*下注单.*提交.*确认.*取消.*结算.*兑现.*私有下注端点/s);
   for (const [status, code] of [
     [400, 'INVALID_REQUEST'],
     [409, 'IDEMPOTENCY_CONFLICT'],
@@ -309,7 +327,11 @@ test('manual bet draft docs define the complete safe handoff contract', () => {
     [502, 'UPSTREAM_BAD_RESPONSE'],
     [502, 'UPSTREAM_SCHEMA_CHANGED'],
   ]) {
-    assert.match(readme, new RegExp(`${status}.*${code}`, 's'));
+    assert.equal(
+      markdownTableHasStatusCodeRow(readme, status, code),
+      true,
+      `${status} ${code} must appear in one README table row`,
+    );
   }
   assert.match(readme, /请求、响应、文档示例和日志.*凭证.*Cookie.*Web Storage.*URL.*token/s);
 
@@ -319,12 +341,16 @@ test('manual bet draft docs define the complete safe handoff contract', () => {
   assert.match(operations, /内存.*不持久化/s);
   assert.match(operations, /手动.*最终确认/s);
   assert.match(operations, /冒烟.*响应结构.*不打印.*请求体.*响应体/s);
+  assert.match(operations, /IDEMPOTENCY_CONFLICT.*同一.*idempotency_key.*不同.*规范化.*原.*payload.*新.*key/s);
+  assert.match(operations, /EVENT_UNAVAILABLE.*SELECTION_UNAVAILABLE.*ODDS_DRIFT_EXCEEDED.*重新获取.*当前赔率.*新建草稿/s);
+  assert.match(operations, /只读.*选择.*scope.*sport.*筛选.*绝不点击.*赔率.*下注单.*提交.*确认.*取消.*结算.*兑现.*私有下注端点/s);
 
   assert.match(upstream, /POST \/api\/bets\/drafts/);
   assert.match(upstream, /existing.*read-only.*getSports.*fresh.*snapshot/is);
   assert.match(upstream, /does not use.*HTTP sports cache/is);
   assert.match(upstream, /exactly one.*event_id.*exactly one.*selection_key.*schema/is);
-  assert.match(upstream, /never calls private venue endpoints/is);
+  assert.match(upstream, /truncated=true.*MALFORMED_CURRENT_SNAPSHOT.*fail closed/is);
+  assert.match(upstream, /never calls\s+private venue endpoints/is);
   assert.match(upstream, /credentials.*cookies.*Web Storage.*URLs.*URL tokens/is);
 });
 

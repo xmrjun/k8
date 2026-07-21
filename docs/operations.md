@@ -17,7 +17,8 @@ Cloudflare 隧道配置无需修改，仍只转发到 `127.0.0.1:8788`。不得�
 `127.0.0.1`。
 
 对 IM 体育的浏览器访问严格只读：服务发布赛事、赔率、盘口可用性、比分和时钟，
-也可仅在本机内存中准备两分钟人工确认草稿，但不执行真实下注或改变页面。
+也可仅在本机内存中准备两分钟人工确认草稿。读取快照时可能切换或选择 `scope`/`sport`
+导航筛选控件，但不执行真实下注，也不改变任何交易状态。
 
 ## 启动顺序
 
@@ -71,14 +72,21 @@ Web Storage。每个草稿创建后 120 秒过期；API 重启、进程崩溃或
 草稿满时会清理过期项并淘汰最旧项；如果处理中请求已经满，返回
 `503 DRAFT_CAPACITY_EXCEEDED`。调用方应指数退避并稍后重试，复用同一意图的
 `idempotency_key`；不要并发制造新键来绕过容量。`BROWSER_UNAVAILABLE` 和
-`UPSTREAM_TIMEOUT` 也可在页面恢复后有限重试。`409` 表示提案状态已变化：重新读取
-赔率并让用户重新决定，不要盲目重试旧输入。登录过期或 schema 变化应先人工修复。
+`UPSTREAM_TIMEOUT` 也可在页面恢复后有限重试。
+
+不同的 `409` 必须分开处理：`IDEMPOTENCY_CONFLICT` 表示同一 `idempotency_key`
+已用于不同的规范化输入，刷新赔率不能解除键冲突。若意图未变，应精确重放原始 payload；
+若确实要修改提案，应使用新的 key。`EVENT_UNAVAILABLE`、`SELECTION_UNAVAILABLE` 和
+`ODDS_DRIFT_EXCEEDED` 才表示当前赛事、选择或赔率已经不满足提案；调用方应重新获取
+当前赔率，让用户重新决定，并用确认后的输入和新幂等键新建草稿。登录过期或 schema
+变化应先人工修复。
 
 成功只到 `ready_for_manual_confirmation`。运维交接流程是：调用方展示响应中的
 `current_odds`、`stake`、`projected_gross_return` 和 `expires_at`；用户回到已登录的
 IM 体育页面手动定位同一选择，重新核对页面当前赔率和金额，并手动完成最终确认。
-本服务永远不会代替这一步，也没有 submit、confirm、cancel、settle 或 cashout
-API、私有场馆请求或页面点击。
+本服务永远不会代替这一步。读取器可能只读地选择 `scope` 和 `sport` 导航筛选控件；
+它绝不点击赔率、下注单、提交、确认、取消、结算或兑现等交易控件，也绝不调用私有下注端点。
+服务没有 submit、confirm、cancel、settle 或 cashout API。
 
 冒烟检查只验证响应结构和汇总状态，不打印私有请求体或响应体。测试工具应在内存中
 断言：HTTP 状态为 `200`，`data.state` 为 `ready_for_manual_confirmation`，

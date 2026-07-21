@@ -111,17 +111,20 @@ the same idempotency key are coalesced around that one read.
 The service validates the complete snapshot schema before lookup. Within the
 requested scope and sport there must be exactly one matching `event_id`, and
 within that event exactly one matching `selection_key`. Duplicate events,
-duplicate selections, mismatched scope or sport, truncated or malformed data,
-and unknown schema fail closed. The unique selection must also be available and
-must have a verified canonical decimal odds string. Projected gross return uses
-these current verified odds, never a cached or caller-supplied value.
+duplicate selections, mismatched scope or sport, malformed data, and unknown
+schema fail closed. In particular, `truncated=true` always maps to
+`MALFORMED_CURRENT_SNAPSHOT` and must fail closed, regardless of the reported
+event count. The unique selection must also be available and must have a verified
+canonical decimal odds string. Projected gross return uses these current verified
+odds, never a cached or caller-supplied value.
 
-Draft verification never calls private venue endpoints, issues page requests,
-opens a bet slip, or clicks odds, submit, confirm, cancel, settle, or cash-out
-controls. The only upstream operation remains the existing bounded read-only
-sports-page inspection. A local draft cannot advance beyond
-`ready_for_manual_confirmation`; the user must perform any final confirmation
-manually on the IM Sports page.
+The existing read-only operation may select the exact scope and sport navigation
+filters needed to obtain the requested snapshot. Draft verification never calls
+private venue endpoints, issues page requests, opens a bet slip, or clicks odds,
+submit, confirm, cancel, settle, or cash-out controls. The only upstream operation
+remains the existing bounded read-only sports-page inspection. A local draft cannot
+advance beyond `ready_for_manual_confirmation`; the user must perform any final
+confirmation manually on the IM Sports page.
 
 The draft request, response, documentation examples, and logs contain no browser
 credentials, cookies, Web Storage values, full venue URLs, or URL tokens. The
