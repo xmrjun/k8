@@ -16,7 +16,8 @@ Cloudflare 隧道配置无需修改，仍只转发到 `127.0.0.1:8788`。不得�
 `9223` 加入 Cloudflare、路由器端口转发或任何公网监听；CDP 必须绑定
 `127.0.0.1`。
 
-第一版严格只读：发布赛事、赔率、盘口可用性、比分和时钟，不执行或准备下注。
+对 IM 体育的浏览器访问严格只读：服务发布赛事、赔率、盘口可用性、比分和时钟，
+也可仅在本机内存中准备两分钟人工确认草稿，但不执行真实下注或改变页面。
 
 ## 启动顺序
 
@@ -43,6 +44,7 @@ HTTP 接口继续使用独立的 `API_TOKEN`。实时接口是：
 GET /api/sports?scope=live|today|early&sport=football|basketball|tennis
 GET /api/sports/catalog
 GET /api/sports/boosts
+POST /api/bets/drafts
 ```
 
 `scope` 和 `sport` 都必须提供。HTTP 读取会在专用 Chrome 中自动选择对应的范围和
@@ -52,6 +54,39 @@ GET /api/sports/boosts
 `/api/sports/catalog` 和 `/api/sports/boosts` 不接受查询参数且不缓存。前者读取热门
 锦标赛、串关标签和其他体育项目目录；后者读取可见赔率增值卡片。两者都不提供下注、
 确认、兑现或资金写入能力。
+
+## 人工确认草稿运维
+
+创建 `POST /api/bets/drafts` 前，必须先启动专用 Chrome，在其中完成登录并保持目标
+IM 体育页面打开；API 还必须能从 `127.0.0.1:9223` 找到完全匹配配置 origin 的页面。
+草稿读取现有只读体育快照，不会打开页面或替操作者登录。请求必须使用 HTTP Bearer
+令牌、`Content-Type: application/json`、无查询参数且不超过 8192 字节。
+
+草稿及幂等记录完全保存在 API 进程内存，不持久化到数据库、文件、Cookie 或浏览器
+Web Storage。每个草稿创建后 120 秒过期；API 重启、进程崩溃或
+部署切换都会使全部草稿立即失效。重启后客户端必须重新获取赛事、重新创建草稿，并由
+用户再次复核，不能把旧 `draft_id` 当作有效凭据。
+
+服务最多保留 1000 个未过期草稿，并最多同时处理 1000 个尚未完成的新建请求。已保存
+草稿满时会清理过期项并淘汰最旧项；如果处理中请求已经满，返回
+`503 DRAFT_CAPACITY_EXCEEDED`。调用方应指数退避并稍后重试，复用同一意图的
+`idempotency_key`；不要并发制造新键来绕过容量。`BROWSER_UNAVAILABLE` 和
+`UPSTREAM_TIMEOUT` 也可在页面恢复后有限重试。`409` 表示提案状态已变化：重新读取
+赔率并让用户重新决定，不要盲目重试旧输入。登录过期或 schema 变化应先人工修复。
+
+成功只到 `ready_for_manual_confirmation`。运维交接流程是：调用方展示响应中的
+`current_odds`、`stake`、`projected_gross_return` 和 `expires_at`；用户回到已登录的
+IM 体育页面手动定位同一选择，重新核对页面当前赔率和金额，并手动完成最终确认。
+本服务永远不会代替这一步，也没有 submit、confirm、cancel、settle 或 cashout
+API、私有场馆请求或页面点击。
+
+冒烟检查只验证响应结构和汇总状态，不打印私有请求体或响应体。测试工具应在内存中
+断言：HTTP 状态为 `200`，`data.state` 为 `ready_for_manual_confirmation`，
+`current_odds` 是字符串，`created_at < expires_at`，`fetched_at === created_at`，且
+响应没有 credential、Cookie、Web Storage 或 URL token 字段；控制台只报告类似
+`draft_shape=ok status=200` 的汇总。失败时只记录 HTTP 状态、稳定 error code 和
+服务生成的 `request_id`，不得记录 Authorization、完整 URL、请求体、响应体、事件、
+选择、赔率或金额。示例只用占位符，绝不复制真实令牌或真实页面 URL。
 
 实时接口是：
 

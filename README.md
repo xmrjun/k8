@@ -1,8 +1,8 @@
 # K8 IM Sports Read-Only Gateway
 
-K8 把 Mac 上已经登录的专用 Chrome 转换为受令牌保护的 HTTP 与 WebSocket 服务，让远程服务器能够读取 IM 体育赛事、赔率、盘口、比分和账户摘要。
+K8 把 Mac 上已经登录的专用 Chrome 转换为受令牌保护的 HTTP 与 WebSocket 服务，让远程服务器能够读取 IM 体育赛事、赔率、盘口、比分和账户摘要，并可在本机内存中准备短期人工确认草稿。
 
-项目当前严格只读：不读取或导出浏览器登录凭证，不下注，也不执行兑现、确认或资金操作。
+项目对 IM 体育始终严格只读：本地草稿不会改变页面或真实注单；项目不读取或导出浏览器登录凭证，不下注，也不执行兑现、确认或资金操作。
 
 ## 架构
 
@@ -26,6 +26,7 @@ Cloudflare 只转发 `127.0.0.1:8788`。Chrome 调试端口 `9223` 必须始终�
 | `GET /api/sports/boosts` | 可用 | 赔率增值与可见组合卡片，只读且不提供下注动作 |
 | `GET /api/sports/account` | 可用 | IM 体育余额与未结算金额，不缓存 |
 | `GET /api/balance` | 可用 | 主账户钱包；要求对应账户页面保持登录 |
+| `POST /api/bets/drafts` | 可用 | 只在本机内存中校验并创建两分钟人工确认草稿；这是安全的本地 draft，不是真实投注写入 |
 | `WS /ws/sports` | 可用 | IM 体育实时快照、赔率增量、比分和心跳 |
 | `GET /api/bets` | 改造中 | 正在从错误的主账户记录页改接 IM 体育注单弹窗，当前不建议接入生产 |
 
@@ -294,9 +295,129 @@ curl \
 
 成功响应统一包含 `data`、`source`、`fetched_at` 和 `request_id`。`401` 表示 API 令牌无效，`503` 通常表示专用 Chrome 或目标页面不可用，`502` 表示登录失效或页面结构发生变化。
 
+### 人工确认投注草稿
+
+`POST /api/bets/drafts` 是一个安全的本地草稿端点，不是真实投注写接口。它使用
+Bearer 鉴权和 `application/json`，不接受查询参数，请求体不得超过 8192 字节。下面的
+完整示例只有占位符；请从调用进程的安全配置注入 API 地址和令牌，不要把真实域名、
+令牌、事件标识或 selection key 写进文档和 shell 历史：
+
+```bash
+curl --request POST \
+  --url "https://<API_HOST>/api/bets/drafts" \
+  --header "Authorization: Bearer <API_TOKEN>" \
+  --header "Content-Type: application/json" \
+  --data '{
+    "scope": "live",
+    "sport": "football",
+    "event_id": "<EVENT_ID_FROM_SPORTS_RESPONSE>",
+    "selection_key": "<SELECTION_KEY_FROM_SPORTS_RESPONSE>",
+    "stake": "10.00",
+    "expected_odds": "1.95",
+    "max_odds_drift": "0.05",
+    "idempotency_key": "<UNIQUE_CLIENT_REQUEST_KEY>"
+  }'
+```
+
+JSON 对象必须恰好包含以下 8 个字符串字段，不能增加未知字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `scope` | 快照范围：`live`、`today` 或 `early` |
+| `sport` | 体育项目：`football`、`basketball` 或 `tennis` |
+| `event_id` | 来自 `GET /api/sports` 当前响应的稳定事件标识；必须是 1–32 位数字字符串 |
+| `selection_key` | 同一响应中的稳定选择标识；1–500 个字符，必须在该事件中唯一且当前可用 |
+| `stake` | `0.01`–`1000000.00` 的正数金额十进制字符串，最多两位小数 |
+| `expected_odds` | 调用方刚观察到的正数十进制赔率字符串 |
+| `max_odds_drift` | 允许的当前赔率与预期赔率绝对偏差，非负十进制字符串 |
+| `idempotency_key` | 调用方生成的 1–200 字符不透明幂等键；相同意图重试时复用 |
+
+所有金额和赔率都必须是十进制字符串，不能发送 JSON number。服务会移除无意义的前导
+零和末尾零并返回规范十进制字符串，例如 `"10.00"` 变为 `"10"`、`"1.9500"`
+变为 `"1.95"`；`projected_gross_return` 始终保留两位小数。
+
+成功响应示例：
+
+```json
+{
+  "data": {
+    "state": "ready_for_manual_confirmation",
+    "scope": "live",
+    "sport": "football",
+    "event_id": "<EVENT_ID_FROM_SPORTS_RESPONSE>",
+    "selection_key": "<SELECTION_KEY_FROM_SPORTS_RESPONSE>",
+    "stake": "10",
+    "expected_odds": "1.95",
+    "current_odds": "1.98",
+    "max_odds_drift": "0.05",
+    "odds_changed": true,
+    "projected_gross_return": "19.80",
+    "created_at": "<ISO_8601_CREATED_AT>",
+    "expires_at": "<ISO_8601_EXPIRES_AT>",
+    "draft_id": "<LOCAL_DRAFT_ID>"
+  },
+  "source": "im-sports-browser",
+  "fetched_at": "<ISO_8601_VERIFICATION_TIME>",
+  "request_id": "<REQUEST_ID>"
+}
+```
+
+响应字段含义：
+
+- `state` 固定为 `ready_for_manual_confirmation`，只表示可以交给用户人工复核。
+- `scope`、`sport`、`event_id`、`selection_key`、`stake`、`expected_odds` 和
+  `max_odds_drift` 是规范化后的提案；`current_odds` 是创建草稿时重新校验的当前赔率。
+- `odds_changed` 表示当前赔率是否不同于预期赔率；差值大于 `max_odds_drift` 时不会创建
+  草稿。`projected_gross_return` 是用当前赔率计算并按分四舍五入的预计总回报，不是盈利
+  或支付承诺。
+- `created_at` 是草稿创建时间，`expires_at` 恰好晚 120 秒，`draft_id` 只标识本进程中的
+  临时草稿。
+- `source` 固定为 `im-sports-browser`；`fetched_at` 是实际校验时间，与首次响应的
+  `created_at` 相同；`request_id` 用于关联已脱敏诊断。
+
+每次新建草稿都会通过现有只读读取器获取新鲜、未缓存的当前 `scope`/`sport` 快照，
+再检查事件和选择唯一、可用及 schema 合法。服务不使用 HTTP sports 缓存，并以
+当前赔率执行偏差检查和预计总回报计算。相同
+`idempotency_key` 和相同规范化请求会原样重放同一个草稿，不再读取上游；同一键的并发
+相同请求也会合并为一次校验。重放时 `fetched_at` 仍是首次实际校验时间，始终保留原始
+`created_at`/`expires_at`，不会伪装成一次更新的赔率读取。相同键配不同请求返回冲突。
+
+草稿只在内存中保留两分钟（120 秒），最多保存 1000 个未过期草稿并最多处理 1000 个
+尚未完成的创建；过期草稿会清理，已存草稿满时淘汰最旧项，处理中请求满时返回过载。
+状态不持久化，API 重启会立即使所有草稿失效。调用方必须在有效期内回到已登录的 IM
+体育页面，亲自复核选择、最新赔率和金额并手动完成最终确认。
+
+稳定错误如下；错误响应只含稳定 code、通用 message 和 `request_id`：
+
+| HTTP | code | 含义 |
+| --- | --- | --- |
+| `400` | `INVALID_REQUEST` | 查询参数、JSON、字段集合或字段值不合法 |
+| `401` | `UNAUTHORIZED` | Bearer 令牌缺失或错误 |
+| `409` | `IDEMPOTENCY_CONFLICT` | 幂等键已用于不同的规范化请求 |
+| `409` | `EVENT_UNAVAILABLE` | 当前快照中事件不存在或不唯一 |
+| `409` | `SELECTION_UNAVAILABLE` | 当前选择不存在、不唯一、锁定或不可用 |
+| `409` | `ODDS_DRIFT_EXCEEDED` | 当前赔率偏差超过允许值 |
+| `413` | `PAYLOAD_TOO_LARGE` | 请求体超过 8192 字节 |
+| `415` | `UNSUPPORTED_MEDIA_TYPE` / `UNSUPPORTED_CHARSET` | 不是受支持的 UTF-8 JSON |
+| `502` | `MALFORMED_CURRENT_SNAPSHOT` | 当前体育快照不符合完整 schema |
+| `503` | `DRAFT_CAPACITY_EXCEEDED` | 1000 个创建请求仍在处理中，请稍后重试 |
+| `503` | `BROWSER_UNAVAILABLE` | 专用 Chrome 不可用 |
+| `502` | `UPSTREAM_AUTH_EXPIRED` | IM 体育登录已过期 |
+| `504` | `UPSTREAM_TIMEOUT` | 新鲜快照读取超时 |
+| `502` | `UPSTREAM_BAD_RESPONSE` | 上游响应损坏 |
+| `502` | `UPSTREAM_SCHEMA_CHANGED` | IM 体育页面 schema 已变化 |
+
+这个项目永远不会通过 API 或页面点击提交、确认、取消、结算或兑现真实注单，也没有
+对应的 submit/confirm/cancel/settle/cashout 路由。所有最终确认只能由用户在 IM 体育
+页面手动完成。草稿请求、响应、文档示例和日志都不得包含浏览器凭证、Cookie、
+Web Storage、完整页面 URL 或 URL query token；服务也不读取这些内容。Bearer API
+令牌只能出现在传输中的 Authorization header，响应和日志绝不回显。
+
 ### 注单接口状态
 
-`GET /api/bets` 目前仍保留旧实现，但该实现读取的不是 IM 体育注单弹窗。请暂时不要让生产服务器依赖它。
+`GET /api/bets` 与上述本地 `POST` 草稿完全不同。它目前仍保留旧实现，但该实现读取的
+不是 IM 体育注单弹窗；请继续把它视为不可靠的只读接口，不要让生产服务器依赖它，
+更不能把它解释为创建或管理真实注单的能力。
 
 已确认的新接口设计为：
 

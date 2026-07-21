@@ -99,6 +99,35 @@ record-filter tabs and restores the originally selected tab after reading. It do
 not click record rows, cash-out controls, bet slips, wager buttons, confirmations,
 or links, and it does not issue page requests or access browser storage.
 
+## Manual-confirmation draft verification
+
+`POST /api/bets/drafts` does not add a betting upstream. It calls the existing
+read-only `getSports({ scope, sport })` operation to obtain one fresh current
+snapshot. The draft route invokes that operation directly and does not use the
+HTTP sports cache; an idempotent replay is the sole case that returns the
+original verified draft without a second read. Equal concurrent requests with
+the same idempotency key are coalesced around that one read.
+
+The service validates the complete snapshot schema before lookup. Within the
+requested scope and sport there must be exactly one matching `event_id`, and
+within that event exactly one matching `selection_key`. Duplicate events,
+duplicate selections, mismatched scope or sport, truncated or malformed data,
+and unknown schema fail closed. The unique selection must also be available and
+must have a verified canonical decimal odds string. Projected gross return uses
+these current verified odds, never a cached or caller-supplied value.
+
+Draft verification never calls private venue endpoints, issues page requests,
+opens a bet slip, or clicks odds, submit, confirm, cancel, settle, or cash-out
+controls. The only upstream operation remains the existing bounded read-only
+sports-page inspection. A local draft cannot advance beyond
+`ready_for_manual_confirmation`; the user must perform any final confirmation
+manually on the IM Sports page.
+
+The draft request, response, documentation examples, and logs contain no browser
+credentials, cookies, Web Storage values, full venue URLs, or URL tokens. The
+reader neither accesses nor exports those values, and sanitized failures expose
+only stable error codes and a service-generated request id.
+
 ## Current Chrome transport
 
 The default `cdp` transport discovers only an exact allow-listed origin and pathname

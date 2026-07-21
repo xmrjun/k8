@@ -227,6 +227,69 @@ test('operations docs describe the dedicated Chrome realtime data path', () => {
   assert.match(operations, /只读/s);
 });
 
+test('manual bet draft docs define the complete safe handoff contract', () => {
+  const readme = projectFile('README.md');
+  const operations = projectFile('docs/operations.md');
+  const upstream = projectFile('docs/im-sports-upstream.md');
+
+  assert.match(readme, /POST \/api\/bets\/drafts/);
+  assert.match(readme, /Bearer.*application\/json.*不接受查询参数.*8192 字节/s);
+  for (const field of [
+    'scope',
+    'sport',
+    'event_id',
+    'selection_key',
+    'stake',
+    'expected_odds',
+    'max_odds_drift',
+    'idempotency_key',
+  ]) {
+    assert.match(readme, new RegExp('`' + field + '`'));
+  }
+  assert.match(readme, /live.*today.*early.*football.*basketball.*tennis/s);
+  assert.match(readme, /120 秒.*1000.*重启.*失效/s);
+  assert.match(readme, /不使用.*HTTP.*缓存.*当前赔率.*偏差.*预计总回报/s);
+  assert.match(readme, /幂等.*并发.*合并/s);
+  assert.match(readme, /ready_for_manual_confirmation.*current_odds.*created_at.*expires_at/s);
+  assert.match(readme, /fetched_at.*实际校验时间.*重放.*原始/s);
+  assert.match(readme, /IM 体育页面.*手动.*最终确认/s);
+  assert.match(readme, /永远不会.*API.*页面点击.*提交.*确认.*取消.*结算.*兑现/s);
+  for (const [status, code] of [
+    [400, 'INVALID_REQUEST'],
+    [409, 'IDEMPOTENCY_CONFLICT'],
+    [409, 'EVENT_UNAVAILABLE'],
+    [409, 'SELECTION_UNAVAILABLE'],
+    [409, 'ODDS_DRIFT_EXCEEDED'],
+    [413, 'PAYLOAD_TOO_LARGE'],
+    [415, 'UNSUPPORTED_MEDIA_TYPE'],
+    [415, 'UNSUPPORTED_CHARSET'],
+    [502, 'MALFORMED_CURRENT_SNAPSHOT'],
+    [503, 'DRAFT_CAPACITY_EXCEEDED'],
+    [503, 'BROWSER_UNAVAILABLE'],
+    [502, 'UPSTREAM_AUTH_EXPIRED'],
+    [504, 'UPSTREAM_TIMEOUT'],
+    [502, 'UPSTREAM_BAD_RESPONSE'],
+    [502, 'UPSTREAM_SCHEMA_CHANGED'],
+  ]) {
+    assert.match(readme, new RegExp(`${status}.*${code}`, 's'));
+  }
+  assert.match(readme, /请求、响应、文档示例和日志.*凭证.*Cookie.*Web Storage.*URL.*token/s);
+
+  assert.match(operations, /IM 体育页面.*登录.*保持打开/s);
+  assert.match(operations, /重启.*草稿.*失效/s);
+  assert.match(operations, /DRAFT_CAPACITY_EXCEEDED.*稍后.*重试/s);
+  assert.match(operations, /内存.*不持久化/s);
+  assert.match(operations, /手动.*最终确认/s);
+  assert.match(operations, /冒烟.*响应结构.*不打印.*请求体.*响应体/s);
+
+  assert.match(upstream, /POST \/api\/bets\/drafts/);
+  assert.match(upstream, /existing.*read-only.*getSports.*fresh.*snapshot/is);
+  assert.match(upstream, /does not use.*HTTP sports cache/is);
+  assert.match(upstream, /exactly one.*event_id.*exactly one.*selection_key.*schema/is);
+  assert.match(upstream, /never calls private venue endpoints/is);
+  assert.match(upstream, /credentials.*cookies.*Web Storage.*URLs.*URL tokens/is);
+});
+
 test('package exposes native syntax checks for production JavaScript and JXA', () => {
   const packageJson = JSON.parse(projectFile('package.json'));
 
