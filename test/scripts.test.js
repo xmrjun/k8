@@ -234,6 +234,42 @@ test('manual bet draft docs define the complete safe handoff contract', () => {
 
   assert.match(readme, /POST \/api\/bets\/drafts/);
   assert.match(readme, /Bearer.*application\/json.*不接受查询参数.*8192 字节/s);
+  const curlMatch = readme.match(/```bash\n(curl --request POST[\s\S]*?)\n```/);
+  assert.ok(curlMatch, 'README must include the draft curl template');
+  const curlTemplate = curlMatch[1];
+  for (const [field, placeholder] of [
+    ['scope', 'SCOPE'],
+    ['sport', 'SPORT'],
+    ['event_id', 'EVENT_ID'],
+    ['selection_key', 'SELECTION_KEY'],
+    ['stake', 'STAKE_DECIMAL'],
+    ['expected_odds', 'EXPECTED_ODDS_DECIMAL'],
+    ['max_odds_drift', 'MAX_ODDS_DRIFT_DECIMAL'],
+    ['idempotency_key', 'IDEMPOTENCY_KEY'],
+  ]) {
+    assert.match(curlTemplate, new RegExp(`"${field}": "<${placeholder}>"`));
+  }
+  assert.match(curlTemplate, /https:\/\/<API_HOST>\/api\/bets\/drafts/);
+  assert.match(curlTemplate, /Authorization: Bearer <API_TOKEN>/);
+  assert.doesNotMatch(
+    curlTemplate,
+    /"(?:scope|sport|stake|expected_odds|max_odds_drift)": "(?:live|football|10\.00|1\.95|0\.05)"/,
+  );
+  const responseMatch = readme.match(/成功响应示例：\n\n```json\n([\s\S]*?)\n```/);
+  assert.ok(responseMatch, 'README must include the draft response template');
+  for (const placeholder of [
+    'SCOPE',
+    'SPORT',
+    'EVENT_ID',
+    'SELECTION_KEY',
+    'STAKE_DECIMAL',
+    'EXPECTED_ODDS_DECIMAL',
+    'CURRENT_ODDS_DECIMAL',
+    'MAX_ODDS_DRIFT_DECIMAL',
+    'PROJECTED_GROSS_RETURN_DECIMAL',
+  ]) {
+    assert.match(responseMatch[1], new RegExp(`<${placeholder}>`));
+  }
   for (const field of [
     'scope',
     'sport',
@@ -263,6 +299,8 @@ test('manual bet draft docs define the complete safe handoff contract', () => {
     [413, 'PAYLOAD_TOO_LARGE'],
     [415, 'UNSUPPORTED_MEDIA_TYPE'],
     [415, 'UNSUPPORTED_CHARSET'],
+    [405, 'METHOD_NOT_ALLOWED'],
+    [500, 'INTERNAL_ERROR'],
     [502, 'MALFORMED_CURRENT_SNAPSHOT'],
     [503, 'DRAFT_CAPACITY_EXCEEDED'],
     [503, 'BROWSER_UNAVAILABLE'],

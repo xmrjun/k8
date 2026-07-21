@@ -300,7 +300,8 @@ curl \
 `POST /api/bets/drafts` 是一个安全的本地草稿端点，不是真实投注写接口。它使用
 Bearer 鉴权和 `application/json`，不接受查询参数，请求体不得超过 8192 字节。下面的
 完整示例只有占位符；请从调用进程的安全配置注入 API 地址和令牌，不要把真实域名、
-令牌、事件标识或 selection key 写进文档和 shell 历史：
+令牌、事件标识或 selection key 写进文档和 shell 历史。使用前必须在安全的调用方配置
+中把每个 `<...>` 替换为对应值；这个占位模板本身不会形成可执行的真实请求：
 
 ```bash
 curl --request POST \
@@ -308,14 +309,14 @@ curl --request POST \
   --header "Authorization: Bearer <API_TOKEN>" \
   --header "Content-Type: application/json" \
   --data '{
-    "scope": "live",
-    "sport": "football",
-    "event_id": "<EVENT_ID_FROM_SPORTS_RESPONSE>",
-    "selection_key": "<SELECTION_KEY_FROM_SPORTS_RESPONSE>",
-    "stake": "10.00",
-    "expected_odds": "1.95",
-    "max_odds_drift": "0.05",
-    "idempotency_key": "<UNIQUE_CLIENT_REQUEST_KEY>"
+    "scope": "<SCOPE>",
+    "sport": "<SPORT>",
+    "event_id": "<EVENT_ID>",
+    "selection_key": "<SELECTION_KEY>",
+    "stake": "<STAKE_DECIMAL>",
+    "expected_odds": "<EXPECTED_ODDS_DECIMAL>",
+    "max_odds_drift": "<MAX_ODDS_DRIFT_DECIMAL>",
+    "idempotency_key": "<IDEMPOTENCY_KEY>"
   }'
 ```
 
@@ -342,16 +343,16 @@ JSON 对象必须恰好包含以下 8 个字符串字段，不能增加未知字
 {
   "data": {
     "state": "ready_for_manual_confirmation",
-    "scope": "live",
-    "sport": "football",
-    "event_id": "<EVENT_ID_FROM_SPORTS_RESPONSE>",
-    "selection_key": "<SELECTION_KEY_FROM_SPORTS_RESPONSE>",
-    "stake": "10",
-    "expected_odds": "1.95",
-    "current_odds": "1.98",
-    "max_odds_drift": "0.05",
-    "odds_changed": true,
-    "projected_gross_return": "19.80",
+    "scope": "<SCOPE>",
+    "sport": "<SPORT>",
+    "event_id": "<EVENT_ID>",
+    "selection_key": "<SELECTION_KEY>",
+    "stake": "<STAKE_DECIMAL>",
+    "expected_odds": "<EXPECTED_ODDS_DECIMAL>",
+    "current_odds": "<CURRENT_ODDS_DECIMAL>",
+    "max_odds_drift": "<MAX_ODDS_DRIFT_DECIMAL>",
+    "odds_changed": false,
+    "projected_gross_return": "<PROJECTED_GROSS_RETURN_DECIMAL>",
     "created_at": "<ISO_8601_CREATED_AT>",
     "expires_at": "<ISO_8601_EXPIRES_AT>",
     "draft_id": "<LOCAL_DRAFT_ID>"
@@ -361,6 +362,10 @@ JSON 对象必须恰好包含以下 8 个字符串字段，不能增加未知字
   "request_id": "<REQUEST_ID>"
 }
 ```
+
+响应模板中的 `<...>` 表示对应运行时值；`odds_changed: false` 仅展示该字段的 JSON
+boolean 类型，实际值由当前赔率是否变化决定。固定协议值只有
+`state: "ready_for_manual_confirmation"` 和 `source: "im-sports-browser"`。
 
 响应字段含义：
 
@@ -393,12 +398,14 @@ JSON 对象必须恰好包含以下 8 个字符串字段，不能增加未知字
 | --- | --- | --- |
 | `400` | `INVALID_REQUEST` | 查询参数、JSON、字段集合或字段值不合法 |
 | `401` | `UNAUTHORIZED` | Bearer 令牌缺失或错误 |
+| `405` | `METHOD_NOT_ALLOWED` | 草稿路径使用了非 `POST` 方法；响应 `Allow: POST` |
 | `409` | `IDEMPOTENCY_CONFLICT` | 幂等键已用于不同的规范化请求 |
 | `409` | `EVENT_UNAVAILABLE` | 当前快照中事件不存在或不唯一 |
 | `409` | `SELECTION_UNAVAILABLE` | 当前选择不存在、不唯一、锁定或不可用 |
 | `409` | `ODDS_DRIFT_EXCEEDED` | 当前赔率偏差超过允许值 |
 | `413` | `PAYLOAD_TOO_LARGE` | 请求体超过 8192 字节 |
 | `415` | `UNSUPPORTED_MEDIA_TYPE` / `UNSUPPORTED_CHARSET` | 不是受支持的 UTF-8 JSON |
+| `500` | `INTERNAL_ERROR` | 内部服务状态无效；响应不会泄漏内部细节 |
 | `502` | `MALFORMED_CURRENT_SNAPSHOT` | 当前体育快照不符合完整 schema |
 | `503` | `DRAFT_CAPACITY_EXCEEDED` | 1000 个创建请求仍在处理中，请稍后重试 |
 | `503` | `BROWSER_UNAVAILABLE` | 专用 Chrome 不可用 |
