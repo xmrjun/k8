@@ -365,6 +365,42 @@ test('POST /api/bets/drafts maps invalid service state to sanitized 500', async 
   assert.equal(response.body.error.code, 'INTERNAL_ERROR');
 });
 
+test('POST /api/bets/drafts reports in-flight draft capacity as sanitized 503', async () => {
+  let releaseUpstream;
+  const upstreamPending = new Promise((resolve) => {
+    releaseUpstream = resolve;
+  });
+  let sportsCalls = 0;
+  const upstream = {
+    async getSports() {
+      sportsCalls += 1;
+      await upstreamPending;
+      return realShapedSportsSnapshot();
+    },
+  };
+  const app = createApp({ apiToken: API_TOKEN, upstream });
+  const pending = Array.from({ length: 1000 }, (_, index) => invokeDraft(
+    app,
+    validDraftInput({ idempotency_key: `private-capacity-${index}` }),
+  ));
+
+  try {
+    const response = await invokeDraft(
+      app,
+      validDraftInput({ idempotency_key: 'private-capacity-overload' }),
+    );
+
+    assert.equal(response.status, 503);
+    assert.equal(response.body.error.code, 'DRAFT_CAPACITY_EXCEEDED');
+    assert.equal(response.body.error.message, 'Draft capacity is temporarily unavailable');
+    assert.equal(JSON.stringify(response.body).includes('private-capacity'), false);
+    assert.equal(sportsCalls, 1000);
+  } finally {
+    releaseUpstream();
+    await Promise.all(pending);
+  }
+});
+
 test('POST /api/bets/drafts replays one local draft without a second sports read', async () => {
   let generated = 0;
   const upstream = createFakeUpstream({ sports: realShapedSportsSnapshot() });

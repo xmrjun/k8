@@ -99,6 +99,16 @@ function sendDraftRouteError(response, error, requestId) {
     }
   }
   if (error instanceof DraftError) {
+    if (error.code === 'DRAFT_CAPACITY_EXCEEDED') {
+      sendError(
+        response,
+        503,
+        error.code,
+        'Draft capacity is temporarily unavailable',
+        requestId,
+      );
+      return;
+    }
     if (error.code === 'INVALID_DRAFT_INPUT') {
       sendError(response, 400, 'INVALID_REQUEST', 'Invalid request', requestId);
       return;
