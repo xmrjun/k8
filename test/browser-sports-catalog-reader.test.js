@@ -27,6 +27,7 @@ function readyPayload() {
       { label: '网球', count: '159', live: true },
       { label: '魔幻弹珠', count: '4', live: true },
       { label: '乒乓球', count: '222', live: true },
+      { label: '羽毛球', count: '56', live: true },
       { label: '排球', count: '7', live: false },
       { label: '棒球', count: '10', live: true },
       { label: '虚拟体育', count: '320', live: false },
@@ -59,6 +60,7 @@ test('normalizes sports catalog, popular tournaments, and navigation tabs', () =
       { sport: 'tennis', label: '网球', count: 159, live: true },
       { sport: 'fantasy_marble', label: '魔幻弹珠', count: 4, live: true },
       { sport: 'table_tennis', label: '乒乓球', count: 222, live: true },
+      { sport: 'badminton', label: '羽毛球', count: 56, live: true },
       { sport: 'volleyball', label: '排球', count: 7, live: false },
       { sport: 'baseball', label: '棒球', count: 10, live: true },
       { sport: 'virtual_sports', label: '虚拟体育', count: 320, live: false },
@@ -111,4 +113,3 @@ test('catalog expression is bounded to verified read-only navigation selectors',
     'xmlhttprequest', 'websocket', 'location.href', '.click(', 'cashout',
   ]) assert.equal(expression.toLowerCase().includes(forbidden), false, forbidden);
 });
-

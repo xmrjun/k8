@@ -11,6 +11,7 @@ const SPORT_BY_LABEL = Object.freeze({
   网球: 'tennis',
   魔幻弹珠: 'fantasy_marble',
   乒乓球: 'table_tennis',
+  羽毛球: 'badminton',
   排球: 'volleyball',
   棒球: 'baseball',
   虚拟体育: 'virtual_sports',
@@ -176,4 +177,3 @@ module.exports = {
   buildSportsCatalogExpression,
   normalizeSportsCatalogPayload,
 };
-

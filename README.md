@@ -265,6 +265,7 @@ esports               电竞体育
 tennis                网球
 fantasy_marble        魔幻弹珠
 table_tennis          乒乓球
+badminton             羽毛球
 volleyball            排球
 baseball              棒球
 virtual_sports        虚拟体育
