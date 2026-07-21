@@ -620,8 +620,7 @@ function currentSelectionOdds(snapshot, normalizedInput) {
     if (!Number.isSafeInteger(currentSnapshot.count)
       || currentSnapshot.count < 0
       || currentSnapshot.count !== events.length
-      || typeof currentSnapshot.truncated !== 'boolean'
-      || (currentSnapshot.truncated && currentSnapshot.count !== MAX_CURRENT_EVENTS)) {
+      || currentSnapshot.truncated !== false) {
       malformedCurrentSnapshot();
     }
 

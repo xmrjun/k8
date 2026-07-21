@@ -878,6 +878,22 @@ for (const [name, mutate] of [
   });
 }
 
+test('rejects a truncated snapshot at the reader event limit', async () => {
+  const snapshot = sportsSnapshot();
+  snapshot.events.push(...Array.from(
+    { length: 499 },
+    (_, index) => sportsEvent(String(900000002 + index)),
+  ));
+  snapshot.count = snapshot.events.length;
+  snapshot.truncated = true;
+  const { service } = testService({ snapshot });
+
+  await assert.rejects(
+    service.create(validInput()),
+    assertDraftError('MALFORMED_CURRENT_SNAPSHOT'),
+  );
+});
+
 for (const [name, mutate] of [
   ['missing event league', (snapshot) => { delete snapshot.events[0].league; }],
   ['non-numeric event id', (snapshot) => { snapshot.events[0].event_id = 'event-1'; }],
