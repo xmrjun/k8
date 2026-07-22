@@ -7,13 +7,19 @@ const MAX_EVENTS = 500;
 const ID_PATTERN = /^\d{1,32}$/;
 const DECIMAL_PATTERN = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
 const LINE_PATTERN = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:\/(?:0|[1-9]\d*)(?:\.\d+)?)?$/;
-const MARKET_TYPES = Object.freeze({ 1: 'handicap', 2: 'total', 3: '1x2' });
+// bti → market type. 4 = 独赢 (basketball moneyline, a 2-way home/away market).
+const MARKET_TYPES = Object.freeze({
+  1: 'handicap', 2: 'total', 3: '1x2', 4: 'moneyline',
+});
 const PERIODS = Object.freeze({ 1: 'full_time', 2: 'first_half' });
 const SELECTION_NAMES = Object.freeze({
   handicap: Object.freeze({ 1: 'home', 2: 'away' }),
   total: Object.freeze({ 3: 'over', 4: 'under' }),
   '1x2': Object.freeze({ 5: 'home', 6: 'draw', 7: 'away' }),
+  moneyline: Object.freeze({ 8: 'home', 9: 'away' }),
 });
+// Markets whose selections carry a handicap/total line (via `dih`).
+const LINE_TYPES = Object.freeze(new Set(['handicap', 'total']));
 
 function schemaError() {
   return upstreamError(CODES.SCHEMA_CHANGED, 'IM Sports response schema changed');
@@ -78,7 +84,7 @@ function normalizeSelection(raw, context) {
     selection_key: `im:${context.eventId}:${context.marketId}:${selectionId}`,
     name,
   };
-  if (context.type !== '1x2') result.line = signedLine(raw.dih);
+  if (LINE_TYPES.has(context.type)) result.line = signedLine(raw.dih);
   if (available) {
     const displayOdds = decimal(raw.o);
     result.display_odds = displayOdds;

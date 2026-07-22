@@ -185,6 +185,47 @@ test('normalizes verified football markets, periods, sides, lines, and odds type
   });
 });
 
+test('normalizes a basketball moneyline (独赢, bti 4) market with no line', () => {
+  const payload = fixture();
+  payload.sel[0].mls.push({
+    mi: 8106,
+    bti: 4,
+    gp: 1,
+    ml: 1,
+    il: false,
+    ws: [
+      { wsi: 9501, si: 8, o: 1.39, ot: 3 },
+      { wsi: 9502, si: 9, o: 2.74, ot: 3 },
+    ],
+  });
+
+  const market = normalizeSnapshot(payload).events[0].markets.at(-1);
+  assert.deepEqual(market, {
+    market_key: 'im:900000001:8106',
+    period: 'full_time',
+    type: 'moneyline',
+    available: true,
+    selections: [
+      {
+        selection_key: 'im:900000001:8106:9501',
+        name: 'home',
+        display_odds: '1.39',
+        odds_format: 'decimal',
+        decimal_odds: '1.39',
+        available: true,
+      },
+      {
+        selection_key: 'im:900000001:8106:9502',
+        name: 'away',
+        display_odds: '2.74',
+        odds_format: 'decimal',
+        decimal_odds: '2.74',
+        available: true,
+      },
+    ],
+  });
+});
+
 test('Hong Kong odds conversion uses exact string arithmetic', () => {
   const payload = fixture();
   payload.sel[0].mls[0].ws[0].o = '0.123456789012345678';

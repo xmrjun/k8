@@ -4,6 +4,7 @@ const { randomUUID } = require('node:crypto');
 
 const { isAuthorized } = require('./auth');
 const { DraftError, createBetDraftService } = require('./bet-drafts');
+const { PlacementError, createBetPlacementService } = require('./bet-placement');
 const { JsonBodyError, readJsonBody } = require('./json-body');
 const {
   sendError,
@@ -138,9 +139,47 @@ function sendDraftRouteError(response, error, requestId, request) {
   sendUpstreamError(response, error, requestId);
 }
 
+// Upstream placement-outcome codes, shared by every placement upstream (the
+// JSON-API and the DOM bet-slip both raise these). Duck-typed by code so app
+// stays independent of which upstream is wired. A drifted/withdrawn selection is
+// a 409 conflict; a venue rejection is a 422; an unconfirmed or failed
+// submission is a 502 (the wager's fate is uncertain — surface it, never 200).
+const PLACEMENT_OUTCOME_STATUS = Object.freeze({
+  ODDS_DRIFT_EXCEEDED: [409, 'Odds changed before placement'],
+  SELECTION_UNAVAILABLE: [409, 'Selection is no longer available'],
+  PLACEMENT_REJECTED: [422, 'The venue rejected the placement'],
+  PLACEMENT_UNCONFIRMED: [502, 'Placement could not be confirmed'],
+  PLACEMENT_FAILED: [502, 'Placement failed'],
+});
+
+function sendPlacementRouteError(response, error, requestId, request) {
+  if (error instanceof PlacementError) {
+    if (error.code === 'BET_PLACEMENT_DISABLED') {
+      sendError(response, 503, error.code, 'Bet placement is disabled', requestId);
+      return;
+    }
+    if (error.code === 'STAKE_LIMIT_EXCEEDED' || error.code === 'DAILY_LIMIT_EXCEEDED') {
+      sendError(response, 422, error.code, 'Stake exceeds a configured limit', requestId);
+      return;
+    }
+    internalError(response, requestId);
+    return;
+  }
+  if (!(error instanceof DraftError)
+    && !(error instanceof JsonBodyError)
+    && Object.hasOwn(PLACEMENT_OUTCOME_STATUS, error?.code)) {
+    const [status, message] = PLACEMENT_OUTCOME_STATUS[error.code];
+    sendError(response, status, error.code, message, requestId);
+    return;
+  }
+  // JsonBodyError and DraftError share the same taxonomy as the drafts route.
+  sendDraftRouteError(response, error, requestId, request);
+}
+
 function createApp({
   apiToken,
   upstream,
+  placement,
   now = () => new Date(),
   requestId = randomUUID,
   draftId = randomUUID,
@@ -160,6 +199,20 @@ function createApp({
     },
     idGenerator: draftId,
   });
+
+  // Placement is opt-in: only build the service when the host wires a config.
+  // Without it, POST /api/bets/place stays a 404 (the endpoint does not exist).
+  const placementService = placement
+    ? createBetPlacementService({
+      draftService,
+      placeBet: (draft) => upstream.placeBet(draft),
+      enabled: placement.enabled,
+      dryRun: placement.dryRun,
+      maxStake: placement.maxStake,
+      maxDailyStake: placement.maxDailyStake,
+      now,
+    })
+    : null;
 
   return async function app(request, response) {
     const id = requestId();
@@ -205,6 +258,45 @@ function createApp({
     }
 
     if (url.pathname === '/api/bets/drafts') {
+      methodNotAllowed(response, id, ['POST']);
+      return;
+    }
+
+    if (placementService && url.pathname === '/api/bets/place'
+      && request.method === 'POST') {
+      if (!isAuthorized(request.headers.authorization, apiToken)) {
+        request.pause?.();
+        unauthorized(response, id, { connection: 'close' });
+        return;
+      }
+      try {
+        if (Array.from(url.searchParams.keys()).length > 0) {
+          request.pause?.();
+          sendError(
+            response,
+            400,
+            'INVALID_REQUEST',
+            'Invalid request',
+            id,
+            { connection: 'close' },
+          );
+          return;
+        }
+        const input = await readJsonBody(request, { maxBytes: 8192 });
+        const data = await placementService.place(input);
+        success(response, {
+          data,
+          source: SPORTS_SOURCE,
+          fetchedAt: data.draft.created_at,
+          requestId: id,
+        });
+      } catch (error) {
+        sendPlacementRouteError(response, error, id, request);
+      }
+      return;
+    }
+
+    if (placementService && url.pathname === '/api/bets/place') {
       methodNotAllowed(response, id, ['POST']);
       return;
     }

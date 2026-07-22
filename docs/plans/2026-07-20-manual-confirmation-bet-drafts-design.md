@@ -1,5 +1,13 @@
 # Manual-Confirmation Bet Drafts Design
 
+> **Scope note (2026-07-21):** The "never submit a wager" guarantee below
+> describes the *draft* feature (`POST /api/bets/drafts`) and still holds for
+> that route. A separate, explicitly guarded endpoint `POST /api/bets/place`
+> now *can* submit a real wager. It is disabled by default, dry-run by default,
+> and enforces odds-drift re-validation, single-bet and daily stake caps, and
+> idempotency. See `src/bet-placement.js`. The draft route itself remains
+> submission-free.
+
 ## Goal
 
 Add a short-lived, authenticated bet-draft API that validates a proposed

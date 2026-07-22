@@ -1,0 +1,57 @@
+{
+  "_source": "Live capture 2026-07-22 from IM Sports (Sunflower 2.0) GetSE endpoint.",
+  "_endpoint": "POST /api/EventV6/GetSE",
+  "_request": {
+    "SportId": 2,
+    "Market": 1,
+    "BetTypeIds": [4, 1, 2],
+    "GamePeriods": [1, 2],
+    "IsCombo": false,
+    "OddsType": 2,
+    "DateFrom": "2026/07/22",
+    "DateTo": "2026/07/22",
+    "SortType": 2
+  },
+  "_notes": [
+    "Basketball is SportId 2 (NOT 54 — that was a different highlights category).",
+    "gp: 1 = full_time (全场), 2 = first_half (上半场).",
+    "bti 1 = 让分 (point spread / handicap): si 1 = home, si 2 = away. Line in hdp / dih.",
+    "bti 2 = 大/小 (over/under total): si 3 = over (大), si 4 = under (小). Line in hdp / dih.",
+    "bti 4 = 独赢 (moneyline, 2-way, no draw): si 8 = home, si 9 = away. No line.",
+    "Odds per selection via ot: ot 3 = European decimal (decimal=o, HK display=o-1); ot 2 = Hong Kong (display=o, decimal=o+1). 让分/大小 use ot 2; 独赢 uses ot 3.",
+    "MULTIPLE LINES: 让分/大小 offer several lines simultaneously as separate mls entries distinguished by ml (ml 1 = main line, 2+ = alternates). This fixture keeps only ml:1. The draft selection_key (eid:period:type:name) has no line component, so exposing only the main line avoids selection_key collisions; alternate lines need a selection_key redesign to support."
+  ],
+  "event": {
+    "eid": 111760946,
+    "home": "陶朗加惠",
+    "away": "奥塔哥掘金",
+    "comp": "新西兰国家联赛",
+    "edt": "2026-07-22T03:00:00-04:00",
+    "markets": [
+      { "bti": 2, "btn": "大/小", "gp": 1, "ml": 1, "ws": [
+        { "si": 3, "hdp": 173, "dih": "173", "o": 0.88, "ot": 2 },
+        { "si": 4, "hdp": 173, "dih": "173", "o": 0.82, "ot": 2 }
+      ] },
+      { "bti": 1, "btn": "让分", "gp": 1, "ml": 1, "ws": [
+        { "si": 1, "hdp": 7, "dih": "-7", "o": 0.87, "ot": 2 },
+        { "si": 2, "hdp": 7, "dih": "+7", "o": 0.89, "ot": 2 }
+      ] },
+      { "bti": 4, "btn": "独赢", "gp": 1, "ml": 1, "ws": [
+        { "si": 8, "o": 1.39, "ot": 3 },
+        { "si": 9, "o": 2.74, "ot": 3 }
+      ] },
+      { "bti": 2, "btn": "上半场 大/小", "gp": 2, "ml": 1, "ws": [
+        { "si": 3, "hdp": 87, "dih": "87", "o": 0.83, "ot": 2 },
+        { "si": 4, "hdp": 87, "dih": "87", "o": 0.85, "ot": 2 }
+      ] },
+      { "bti": 1, "btn": "上半场 让分", "gp": 2, "ml": 1, "ws": [
+        { "si": 1, "hdp": 3.5, "dih": "-3.5", "o": 0.83, "ot": 2 },
+        { "si": 2, "hdp": 3.5, "dih": "+3.5", "o": 0.91, "ot": 2 }
+      ] },
+      { "bti": 4, "btn": "上半场 独赢", "gp": 2, "ml": 1, "ws": [
+        { "si": 8, "o": 1.42, "ot": 3 },
+        { "si": 9, "o": 2.63, "ot": 3 }
+      ] }
+    ]
+  }
+}

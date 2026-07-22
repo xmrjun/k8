@@ -1,0 +1,59 @@
+{
+  "_source": "Live capture 2026-07-22 from IM Sports (Sunflower 2.0) GetSE endpoint (SportId 1, Market 1). Real event with real wsi/mi ids.",
+  "_endpoint": "POST /api/EventV6/GetSE",
+  "_request": {
+    "SportId": 1,
+    "Market": 1,
+    "BetTypeIds": [1, 2, 3],
+    "GamePeriods": [1, 2],
+    "IsCombo": false,
+    "OddsType": 2,
+    "DateFrom": "2026/07/22"
+  },
+  "_notes": [
+    "Events come back in data.sel (each with mls markets); data.d is a compressed side-dictionary that is not needed.",
+    "gp: 1 = full_time (全场), 2 = first_half (上半场).",
+    "bti 1 = 让球 (Asian handicap): si 1 = home, si 2 = away. Line in hdp (numeric) / dih (display, signed per side).",
+    "bti 2 = 大/小 (over/under): si 3 = over (大), si 4 = under (小). Line in hdp / dih.",
+    "bti 3 = 1X2: si 5 = home, si 6 = draw, si 7 = away. No line.",
+    "Odds type is PER SELECTION via ot: ot 3 = European decimal (o = decimal, HK display = o-1); ot 2 = Hong Kong (o = HK display, decimal = o+1). 1X2 uses ot 3; 让球/大小 use ot 2.",
+    "Only the main line (ml 1) is kept; alternate lines (ml 2+) share the same selection_key and are dropped.",
+    "dih maps directly to the draft `line` field (e.g. '+0.5/1', '-0.5/1', '2/2.5')."
+  ],
+  "event": {
+    "eid": 111756567,
+    "home": "曼塔",
+    "away": "利加大学",
+    "comp": "厄瓜多尔甲级联赛",
+    "iop": true,
+    "edt": "2026-07-22T20:00:00-04:00",
+    "markets": [
+      { "mi": 2479223126, "bti": 2, "btn": "大/小", "gp": 1, "ml": 1, "ws": [
+        { "wsi": 32174501436, "si": 3, "hdp": 2.25, "dih": "2/2.5", "o": 1.08, "ot": 2 },
+        { "wsi": 32174501437, "si": 4, "hdp": 2.25, "dih": "2/2.5", "o": 0.72, "ot": 2 }
+      ] },
+      { "mi": 2479223121, "bti": 1, "btn": "让球", "gp": 1, "ml": 1, "ws": [
+        { "wsi": 32174501434, "si": 1, "hdp": -0.75, "dih": "+0.5/1", "o": 0.77, "ot": 2 },
+        { "wsi": 32174501435, "si": 2, "hdp": -0.75, "dih": "-0.5/1", "o": 1.03, "ot": 2 }
+      ] },
+      { "mi": 2479223131, "bti": 3, "btn": "1X2", "gp": 1, "ml": 1, "ws": [
+        { "wsi": 32174634328, "si": 5, "o": 4.15, "ot": 3 },
+        { "wsi": 32174634329, "si": 6, "o": 1.76, "ot": 3 },
+        { "wsi": 32174634330, "si": 7, "o": 3.25, "ot": 3 }
+      ] },
+      { "mi": 2479223140, "bti": 2, "btn": "上半场 大/小", "gp": 2, "ml": 1, "ws": [
+        { "wsi": 32180020177, "si": 3, "hdp": 0.75, "dih": "0.5/1", "o": 0.74, "ot": 2 },
+        { "wsi": 32180020178, "si": 4, "hdp": 0.75, "dih": "0.5/1", "o": 1.06, "ot": 2 }
+      ] },
+      { "mi": 2479223137, "bti": 1, "btn": "上半场 让球", "gp": 2, "ml": 1, "ws": [
+        { "wsi": 32180018344, "si": 1, "hdp": -0.25, "dih": "+0/0.5", "o": 0.87, "ot": 2 },
+        { "wsi": 32180018345, "si": 2, "hdp": -0.25, "dih": "-0/0.5", "o": 0.93, "ot": 2 }
+      ] },
+      { "mi": 2479223143, "bti": 3, "btn": "上半场 1X2", "gp": 2, "ml": 1, "ws": [
+        { "wsi": 32180033472, "si": 5, "o": 5.4, "ot": 3 },
+        { "wsi": 32180033473, "si": 6, "o": 2.33, "ot": 3 },
+        { "wsi": 32180033474, "si": 7, "o": 1.98, "ot": 3 }
+      ] }
+    ]
+  }
+}

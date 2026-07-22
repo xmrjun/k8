@@ -1,0 +1,51 @@
+{
+  "_source": "Real placement captured 2026-07-22 from IM Sports (Sunflower 2.0). A pre-match 让球 -0.5 @ 0.90 bet, stake 1 USD, placed via the venue's own signed calls (the venue was in one-click bet mode). Documents the exact GetBI + SPB request/response the site sends.",
+  "_notes": [
+    "Both calls are ordinary JSON POSTs; the ONLY thing our code cannot reproduce is the per-request x-sc signature (see docs/plans/2026-07-22-imsb-live-protocol.md). The venue signs its own calls, so placement must be triggered through the site (DOM), not a bare fetch.",
+    "GetBI request wss[0] matches imsb-api.buildPlaceExpression's gbi exactly.",
+    "SPB request `ws` has NO hs/as (score) — a pre-match bet omits them. buildPlaceExpression was corrected to match.",
+    "SPB response: wid = 投注编号 (bet id), ao = accepted odds, ab = balance after. interpretPlaceResult maps wid/ao/ab -> {bet_id, accepted_odds, balance}."
+  ],
+  "getBI": {
+    "request": {
+      "wss": [
+        {
+          "spid": 1, "eid": 111744058, "btid": 1, "gp": 1, "otid": 2,
+          "mlid": 2478930017, "wsid": 32172978125, "btsid": 1,
+          "h": 0.5, "o": 0.9, "spf": "", "md": 0, "sid": 0,
+          "refid": 32172978125, "wt": 1
+        }
+      ],
+      "wt": 1
+    },
+    "response": {
+      "wss": [
+        {
+          "refid": 32172978125, "hds": "0.5", "os": "0.90", "eid": 111744058,
+          "spid": 1, "m": 2, "mlid": 2478930017, "wsid": 32172978125, "otid": 2,
+          "btid": 1, "btsid": 1, "h": 0.5, "dih": "-0.5", "o": 0.9, "ortid": 0,
+          "s": 100, "spf": "", "md": 0, "sid": 0, "pbsc": 0, "iub": false
+        }
+      ],
+      "bset": [
+        { "refid": 32172978125, "noc": 0, "mib": 1, "mab": 5885.55, "cs": 0, "epa": 0.9, "sw": [1, 2] }
+      ],
+      "StatusCode": 100
+    }
+  },
+  "spb": {
+    "request": {
+      "s": "1",
+      "ws": {
+        "spid": 1, "eid": 111744058, "m": 2, "otid": 2, "btid": 1,
+        "mlid": 2478930017, "wsid": 32172978125, "btsid": 1,
+        "h": 0.5, "o": 0.9, "ortid": 0, "spf": "", "Matchday": 0, "SeasonId": 0, "gp": 1
+      },
+      "fpf": "MacIntel"
+    },
+    "response": {
+      "wid": "2607220153304812", "pbs": 2, "ao": 0.9, "aos": "0.90",
+      "h": 0.5, "dih": "-0.5", "est": 0.9, "StatusCode": 100
+    }
+  }
+}

@@ -74,6 +74,9 @@ test('loadConfig defaults to the loopback Chrome browser bridge', () => {
       browserPageOrigin: 'https://k81128.com',
       browserSportsOrigin: 'https://imsb-fxnag.utoyen.com:2053',
       browserOperationTimeoutMs: 15000,
+      placement: {
+        enabled: false, dryRun: true, maxStake: 500, maxDailyStake: 5000,
+      },
     });
   });
 });
@@ -93,6 +96,10 @@ test('loadConfig reads all configuration from process.env', () => {
     BROWSER_PAGE_ORIGIN: 'https://K81128.com',
     BROWSER_SPORTS_ORIGIN: 'https://IMSB-FXNAG.UTOYEN.COM:2053',
     BROWSER_OPERATION_TIMEOUT_MS: '9000',
+    BET_PLACEMENT_ENABLED: 'true',
+    BET_PLACEMENT_DRY_RUN: 'false',
+    BET_MAX_STAKE: '250',
+    BET_MAX_DAILY_STAKE: '2000',
   }, () => {
     assert.deepEqual(loadConfig(), {
       host: '127.0.0.2',
@@ -108,6 +115,9 @@ test('loadConfig reads all configuration from process.env', () => {
       browserPageOrigin: 'https://k81128.com',
       browserSportsOrigin: 'https://imsb-fxnag.utoyen.com:2053',
       browserOperationTimeoutMs: 9000,
+      placement: {
+        enabled: true, dryRun: false, maxStake: 250, maxDailyStake: 2000,
+      },
     });
   });
 });
@@ -136,6 +146,9 @@ test('publicConfig exposes only non-secret diagnostics', () => {
       browserPageOrigin: 'https://k81128.com',
       browserSportsOrigin: 'https://imsb-fxnag.utoyen.com:2053',
       browserOperationTimeoutMs: 15000,
+      placement: {
+        enabled: false, dryRun: true, maxStake: 500, maxDailyStake: 5000,
+      },
     });
     assert.equal(serialized.includes(apiToken), false);
     assert.equal(serialized.includes(wsToken), false);
@@ -163,7 +176,18 @@ for (const browserTransport of ['unknown', '', 'APPLE_EVENTS']) {
 for (const upstreamMode of ['unknown', '', 'BROWSER']) {
   test(`loadConfig rejects invalid UPSTREAM_MODE ${JSON.stringify(upstreamMode)}`, () => {
     withEnv({ API_TOKEN: 'a'.repeat(32), UPSTREAM_MODE: upstreamMode }, () => {
-      assert.throws(() => loadConfig(), /UPSTREAM_MODE must be browser, http, or disabled/);
+      assert.throws(
+        () => loadConfig(),
+        /UPSTREAM_MODE must be browser, imsb_api, http, or disabled/,
+      );
+    });
+  });
+}
+
+for (const upstreamMode of ['browser', 'imsb_api', 'http', 'disabled']) {
+  test(`loadConfig accepts UPSTREAM_MODE ${JSON.stringify(upstreamMode)}`, () => {
+    withEnv({ API_TOKEN: 'a'.repeat(32), UPSTREAM_MODE: upstreamMode }, () => {
+      assert.equal(loadConfig().upstreamMode, upstreamMode);
     });
   });
 }
@@ -266,6 +290,33 @@ for (const cacheMs of ['-1', '1.5', 'Infinity', 'not-a-number']) {
   test(`loadConfig rejects invalid SPORTS_CACHE_MS ${cacheMs}`, () => {
     withEnv({ API_TOKEN: 'a'.repeat(32), SPORTS_CACHE_MS: cacheMs }, () => {
       assert.throws(() => loadConfig(), /SPORTS_CACHE_MS must be a non-negative integer/);
+    });
+  });
+}
+
+for (const value of ['1', 'yes', 'TRUE', 'on']) {
+  test(`loadConfig rejects a non-boolean BET_PLACEMENT_ENABLED ${value}`, () => {
+    withEnv({ API_TOKEN: 'a'.repeat(32), BET_PLACEMENT_ENABLED: value }, () => {
+      assert.throws(() => loadConfig(), /BET_PLACEMENT_ENABLED must be true or false/);
+    });
+  });
+}
+
+test('loadConfig rejects a daily cap below the single-bet cap', () => {
+  withEnv({
+    API_TOKEN: 'a'.repeat(32), BET_MAX_STAKE: '500', BET_MAX_DAILY_STAKE: '400',
+  }, () => {
+    assert.throws(
+      () => loadConfig(),
+      /BET_MAX_DAILY_STAKE must be greater than or equal to BET_MAX_STAKE/,
+    );
+  });
+});
+
+for (const value of ['0', '-5', '1.5', 'nope']) {
+  test(`loadConfig rejects invalid BET_MAX_STAKE ${value}`, () => {
+    withEnv({ API_TOKEN: 'a'.repeat(32), BET_MAX_STAKE: value }, () => {
+      assert.throws(() => loadConfig(), /BET_MAX_STAKE must be a positive integer/);
     });
   });
 }

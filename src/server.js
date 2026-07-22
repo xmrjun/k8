@@ -11,6 +11,7 @@ const { createFeedState } = require('./realtime/feed-state');
 const { createImNetworkMonitor } = require('./realtime/im-network-monitor');
 const { createWsFeedServer } = require('./realtime/ws-feed-server');
 const { createBrowserUpstream } = require('./upstream/browser');
+const { createImsbUpstream } = require('./upstream/imsb');
 const { CODES, upstreamError } = require('./upstream/errors');
 
 function createDisabledUpstream() {
@@ -24,8 +25,22 @@ function createDisabledUpstream() {
     getSportsBoosts: unavailable,
     getBalance: unavailable,
     getBets: unavailable,
+    placeBet: unavailable,
     async close() {},
   });
+}
+
+function resolveGatewayFactory(config, {
+  appleEventsGatewayFactory,
+  cdpGatewayFactory,
+}) {
+  if (config.browserTransport === 'apple_events') {
+    return { gatewayFactory: appleEventsGatewayFactory, sharedOptions: {} };
+  }
+  if (config.browserTransport === 'cdp') {
+    return { gatewayFactory: cdpGatewayFactory, sharedOptions: { cdpUrl: config.browserCdpUrl } };
+  }
+  throw new TypeError('Unsupported browser transport');
 }
 
 function createConfiguredUpstream(config, {
@@ -33,20 +48,30 @@ function createConfiguredUpstream(config, {
   cdpGatewayFactory = createBrowserGateway,
   queueFactory = createOperationQueue,
 } = {}) {
+  if (config.upstreamMode === 'imsb_api') {
+    const queue = queueFactory({ timeoutMs: config.browserOperationTimeoutMs });
+    const { gatewayFactory, sharedOptions } = resolveGatewayFactory(config, {
+      appleEventsGatewayFactory,
+      cdpGatewayFactory,
+    });
+    // One gateway on the signed-in sports page. Reads (pre-match GetSE, live
+    // GetSEDelta) and placement (GetBI/SPB) are all token-authenticated
+    // page-context fetches; no network monitor is needed.
+    const gateway = gatewayFactory({
+      ...sharedOptions,
+      pageOrigin: config.browserSportsOrigin,
+      pagePathname: '/',
+    });
+    return createImsbUpstream({ gateway, queue });
+  }
+
   if (config.upstreamMode !== 'browser') return createDisabledUpstream();
 
   const queue = queueFactory({ timeoutMs: config.browserOperationTimeoutMs });
-  let gatewayFactory;
-  let sharedOptions;
-  if (config.browserTransport === 'apple_events') {
-    gatewayFactory = appleEventsGatewayFactory;
-    sharedOptions = {};
-  } else if (config.browserTransport === 'cdp') {
-    gatewayFactory = cdpGatewayFactory;
-    sharedOptions = { cdpUrl: config.browserCdpUrl };
-  } else {
-    throw new TypeError('Unsupported browser transport');
-  }
+  const { gatewayFactory, sharedOptions } = resolveGatewayFactory(config, {
+    appleEventsGatewayFactory,
+    cdpGatewayFactory,
+  });
   const sportsGateway = gatewayFactory({
     ...sharedOptions,
     pageOrigin: config.browserSportsOrigin,
@@ -100,8 +125,11 @@ function createHttpServer(config, injectedUpstream, {
     apiToken: config.apiToken,
     sportsCacheMs: config.sportsCacheMs,
     upstream,
+    placement: config.placement,
   }));
 
+  // Browser mode serves live odds to WS clients via a CDP monitor → feed-state.
+  // imsb_api reads live directly (GetSEDelta) and needs no monitor.
   let monitor = null;
   let wsFeed = null;
   let detachUnavailable = null;

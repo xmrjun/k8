@@ -6,6 +6,27 @@ K8 把 Mac 上已经登录的专用 Chrome 转换为受令牌保护的 HTTP 与 
 导航筛选控件，但本地草稿不会改变真实注单；项目不读取或导出浏览器登录凭证，不下注，
 也不执行兑现、确认或资金操作。
 
+## 本次更新（2026-07-22）：`imsb_api` 直连模式与下注能力
+
+在原有 `browser`（DOM 只读）模式之外，新增了 `UPSTREAM_MODE=imsb_api`：**直接调用
+IM 体育（Sunflower 2.0）自己的 JSON API**，替代脆弱的 DOM 抓取/点击。全部通过浏览器
+gateway 的 `evaluate` 在已登录页面上下文执行，因此服务器不接触会话令牌。
+
+- **读盘**：早盘/今日 = `EventV6/GetSE`（按日期窗口）；滚球 = `EventV6/GetSEDelta`
+  空 Delta 一次性全量（`a:0` 事件）。均归一化为与 `browser` 模式一致的 draft 快照形状，
+  已验证市场：足球 `1x2`/`handicap`/`total`、篮球 `moneyline`(独赢)/`handicap`(让分)/`total`。
+- **下注**：`POST /api/bets/place`（`PlaceBetV6/GetBI` 校验+限额 → `SPB` 提交）。
+  **默认禁用且处于 dry-run**，见下文护栏。
+- **认证（经实测）**：每个 `/api` 请求带 `x-token`（会话令牌 = 页面 URL 的 `?token=` 值，
+  也镜像在 `localStorage.siteProfile.t`）+ 几个常量头（`x-v/x-platform/x-lang/x-oddsTemp/
+  x-oddsTempBetType`）。站点另发的 per-request `x-sc` 签名**服务器不校验**，无需复现。
+  令牌**会过期**（`StatusCode != 100`），需用新登录 URL 重新播种。令牌只在浏览器页面
+  上下文读取，不进入服务器或日志。
+
+设计与协议细节见
+[imsb_api 集成设计](docs/plans/2026-07-21-imsb-api-integration-design.md) 与
+[live 协议与认证](docs/plans/2026-07-22-imsb-live-protocol.md)。
+
 ## 架构
 
 ```text
@@ -29,7 +50,8 @@ Cloudflare 只转发 `127.0.0.1:8788`。Chrome 调试端口 `9223` 必须始终�
 | `GET /api/sports/account` | 可用 | IM 体育余额与未结算金额，不缓存 |
 | `GET /api/balance` | 可用 | 主账户钱包；要求对应账户页面保持登录 |
 | `POST /api/bets/drafts` | 可用 | 只在本机内存中校验并创建两分钟人工确认草稿；这是安全的本地 draft，不是真实投注写入 |
-| `WS /ws/sports` | 可用 | IM 体育实时快照、赔率增量、比分和心跳 |
+| `POST /api/bets/place` | 默认禁用 | 仅 `imsb_api` 模式；可提交真实注单，受 kill switch + dry-run + 金额上限 + 幂等四重护栏保护，默认 `503` |
+| `WS /ws/sports` | 可用 | IM 体育实时快照、赔率增量、比分和心跳（仅 `browser` 模式）|
 | `GET /api/bets` | 改造中 | 正在从错误的主账户记录页改接 IM 体育注单弹窗，当前不建议接入生产 |
 
 实时推送目前只发布经过验证的足球数据；混合快照中的未验证体育类型会被忽略，不会猜测字段含义。
@@ -489,8 +511,12 @@ K8_WS_BASE_URL=wss://<你的 API 域名> npm run smoke:ws
 - HTTP 与 WebSocket 使用不同的高强度令牌。
 - 浏览器调试端口只允许 `127.0.0.1` 或 `::1`。
 - Cloudflare Tunnel 只连接 API 端口，不连接 Chrome 调试端口。
-- 第一版不提供下注、兑现、确认或资金操作。
-- 赔率增值和串关端点只是只读展示；项目不提供自动下注、确认下注或兑现接口。
+- `browser` 模式严格只读，不下注、不兑现、不确认、不做资金操作。
+- `imsb_api` 模式的 `POST /api/bets/place` 可提交真实注单，但受四重护栏保护：
+  `BET_PLACEMENT_ENABLED=false`（默认 `503` 禁用）、`BET_PLACEMENT_DRY_RUN=true`
+  （默认只校验不提交）、单笔/单日金额上限、以及按幂等键防重复提交。默认状态下不会
+  下任何真实注单；只有显式 `ENABLED=true` 且 `DRY_RUN=false` 才会真正提交。
+- 赔率增值和串关端点只是只读展示；项目不提供自动兑现或资金操作接口。
 - 自动化测试只使用合成数据，不保存真实账户记录。
 
 ## 文档
@@ -500,3 +526,5 @@ K8_WS_BASE_URL=wss://<你的 API 域名> npm run smoke:ws
 - [部署与故障处理](docs/operations.md)
 - [实时行情设计](docs/plans/2026-07-19-im-sports-realtime-feed-design.md)
 - [IM 注单弹窗设计](docs/plans/2026-07-19-im-sports-bets-design.md)
+- [imsb_api 集成设计](docs/plans/2026-07-21-imsb-api-integration-design.md)
+- [live 协议与认证](docs/plans/2026-07-22-imsb-live-protocol.md)

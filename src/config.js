@@ -11,6 +11,39 @@ function integerSetting(name, fallback, isValid, requirement) {
   return value;
 }
 
+function booleanSetting(name, fallback) {
+  const rawValue = process.env[name];
+  if (rawValue === undefined || rawValue === '') return fallback;
+  if (rawValue === 'true') return true;
+  if (rawValue === 'false') return false;
+  throw new Error(`${name} must be true or false`);
+}
+
+function placementConfig() {
+  const enabled = booleanSetting('BET_PLACEMENT_ENABLED', false);
+  // Fail safe by default: even once enabled, stay in dry-run until explicitly
+  // told to submit real wagers.
+  const dryRun = booleanSetting('BET_PLACEMENT_DRY_RUN', true);
+  const maxStake = integerSetting(
+    'BET_MAX_STAKE',
+    500,
+    (value) => value >= 1,
+    'must be a positive integer',
+  );
+  const maxDailyStake = integerSetting(
+    'BET_MAX_DAILY_STAKE',
+    5000,
+    (value) => value >= 1,
+    'must be a positive integer',
+  );
+  if (maxDailyStake < maxStake) {
+    throw new Error('BET_MAX_DAILY_STAKE must be greater than or equal to BET_MAX_STAKE');
+  }
+  return {
+    enabled, dryRun, maxStake, maxDailyStake,
+  };
+}
+
 function upstreamBaseUrl() {
   const value = process.env.UPSTREAM_BASE_URL || '';
 
@@ -36,8 +69,8 @@ function upstreamMode() {
   const value = process.env.UPSTREAM_MODE === undefined
     ? 'browser'
     : process.env.UPSTREAM_MODE;
-  if (!['browser', 'http', 'disabled'].includes(value)) {
-    throw new Error('UPSTREAM_MODE must be browser, http, or disabled');
+  if (!['browser', 'imsb_api', 'http', 'disabled'].includes(value)) {
+    throw new Error('UPSTREAM_MODE must be browser, imsb_api, http, or disabled');
   }
   return value;
 }
@@ -146,6 +179,7 @@ function loadConfig() {
       (value) => value > 0,
       'must be a positive integer',
     ),
+    placement: placementConfig(),
   };
 }
 
@@ -164,6 +198,12 @@ function publicConfig() {
     browserPageOrigin: config.browserPageOrigin,
     browserSportsOrigin: config.browserSportsOrigin,
     browserOperationTimeoutMs: config.browserOperationTimeoutMs,
+    placement: {
+      enabled: config.placement.enabled,
+      dryRun: config.placement.dryRun,
+      maxStake: config.placement.maxStake,
+      maxDailyStake: config.placement.maxDailyStake,
+    },
   };
 }
 

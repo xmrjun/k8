@@ -7,8 +7,24 @@ const {
   normalizeMarkets,
 } = require('./im-protocol');
 
+// Delta action types (`dc[].a`). The live feed is delta-only and bootstraps
+// itself: there is no `sel` snapshot — a `0` (add event) carries a full event.
+//   0 add event | 1 remove event | 2 metadata | 3 replace markets
+//   4 patch markets | 5 score | 6 clock | 11 period scores
+// Auxiliary actions carry no odds/score/name change and are skipped (not
+// resynced): 10 status flag, 14 match stats, 15 available bet-type ids.
+const IGNORED_ACTIONS = new Set([10, 14, 15]);
+
 function clone(value) {
   return structuredClone(value);
+}
+
+function record(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function eventKey(eid) {
+  return typeof eid === 'number' && Number.isSafeInteger(eid) ? String(eid) : eid;
 }
 
 function deepFreeze(value) {
@@ -210,13 +226,48 @@ function createFeedState({ now = Date.now, staleMs = 15_000 } = {}) {
     rawEvent._periodScores = clone(value);
   }
 
+  // action 0: add (or replace) an event. `v[0]` is a full event, same shape as a
+  // snapshot `sel` entry. m !== 3 events are tracked as ignored (like the
+  // snapshot path) so later deltas for them are skipped, not resynced.
+  function applyAddEvent(candidateRaw, candidateIgnored, eventId, entry) {
+    if (!Array.isArray(entry.v) || entry.v.length !== 1 || !record(entry.v[0])) {
+      throw new Error('schema');
+    }
+    const raw = entry.v[0];
+    if (eventKey(raw.eid) !== eventId) throw new Error('schema');
+    if (raw.m === 3) {
+      candidateRaw.set(eventId, clone(raw));
+      candidateIgnored.delete(eventId);
+    } else {
+      candidateIgnored.add(eventId);
+      candidateRaw.delete(eventId);
+    }
+  }
+
+  // action 2: merge event metadata. Only the display fields the public shape
+  // uses (league / team names) are merged; the full event is re-normalized after.
+  function applyMetadata(rawEvent, value) {
+    if (!record(value)) throw new Error('schema');
+    for (const key of ['cn', 'htn', 'atn']) {
+      if (typeof value[key] === 'string' && value[key].trim().length > 0) {
+        rawEvent[key] = value[key];
+      }
+    }
+  }
+
   function ingestDelta(value) {
-    if (!ready || resyncRequired || !Array.isArray(value.dc) || value.dc.length > 10_000) {
+    if (resyncRequired || !Array.isArray(value.dc) || value.dc.length > 10_000) {
       return resyncResult();
     }
+    // The feed is delta-only: when not yet ready, this batch bootstraps the
+    // state from its `a:0` add-event entries. A batch with no add that references
+    // events we do not have means we joined mid-stream — resync for a full one.
+    const bootstrapping = !ready;
     const candidateRaw = new Map([...rawEvents].map(
       ([eventId, rawEvent]) => [eventId, clone(rawEvent)],
     ));
+    const candidateIgnored = new Set(ignoredEventIds);
+    let sawAdd = false;
 
     try {
       for (const entry of value.dc) {
@@ -225,14 +276,25 @@ function createFeedState({ now = Date.now, staleMs = 15_000 } = {}) {
           || !Number.isSafeInteger(entry.sid)) {
           throw new Error('schema');
         }
-        const eventId = typeof entry.eid === 'number' && Number.isSafeInteger(entry.eid)
-          ? String(entry.eid)
-          : entry.eid;
-        if (ignoredEventIds.has(eventId)) continue;
+        const eventId = eventKey(entry.eid);
+
+        if (entry.a === 0) {
+          applyAddEvent(candidateRaw, candidateIgnored, eventId, entry);
+          sawAdd = true;
+          continue;
+        }
+        if (entry.a === 1) {
+          candidateRaw.delete(eventId);
+          candidateIgnored.delete(eventId);
+          continue;
+        }
+        if (IGNORED_ACTIONS.has(entry.a)) continue;
+        if (candidateIgnored.has(eventId)) continue;
         const rawEvent = candidateRaw.get(eventId);
         if (!rawEvent) throw new Error('schema');
 
-        if (entry.a === 3) applyMarketUpdate(rawEvent, entry, false);
+        if (entry.a === 2) applyMetadata(rawEvent, entry.v);
+        else if (entry.a === 3) applyMarketUpdate(rawEvent, entry, false);
         else if (entry.a === 4) applyMarketUpdate(rawEvent, entry, true);
         else if (entry.a === 5) applyScore(rawEvent, entry.v);
         else if (entry.a === 6) applyClock(rawEvent, entry.v);
@@ -240,10 +302,17 @@ function createFeedState({ now = Date.now, staleMs = 15_000 } = {}) {
         else throw new Error('unsupported');
       }
 
+      // Cannot seed an empty state from a batch that added nothing.
+      if (bootstrapping && !sawAdd) return resyncResult();
+
       const candidateEvents = [...candidateRaw.values()].map(normalizeEvent);
-      const messages = diff(events, candidateEvents);
+      const messages = ready ? diff(events, candidateEvents) : [];
+      if (bootstrapping) nextSequence();
       rawEvents = candidateRaw;
+      ignoredEventIds = candidateIgnored;
       events = candidateEvents;
+      ready = true;
+      resyncRequired = false;
       lastValidAt = now();
       notify(messages);
       return { messages, needsResync: false };
@@ -269,6 +338,14 @@ function createFeedState({ now = Date.now, staleMs = 15_000 } = {}) {
   function snapshot() {
     if (!ready) return null;
     return deepFreeze(clone({ type: 'snapshot', events, seq: sequence }));
+  }
+
+  // Raw upstream live events (the `sel`-shaped source, m === 3 only), for
+  // consumers that re-normalize into a different model — e.g. the imsb upstream
+  // projects these into the draft snapshot shape. Null until the feed is ready.
+  function liveEvents() {
+    if (!ready || resyncRequired) return null;
+    return [...rawEvents.values()].map(clone);
   }
 
   function isStale() {
@@ -297,6 +374,7 @@ function createFeedState({ now = Date.now, staleMs = 15_000 } = {}) {
   return Object.freeze({
     ingest,
     snapshot,
+    liveEvents,
     isStale,
     invalidate,
     subscribe,

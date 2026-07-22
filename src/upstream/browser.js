@@ -139,6 +139,14 @@ function createBrowserUpstream({
     getSportsBoosts: () => perform(sportsGateway, selectedReaders.sportsBoosts),
     getBalance: () => perform(accountGateway, selectedReaders.balance),
     getBets: (options = {}) => perform(betsGateway, selectedReaders.bets, options),
+    // Step 2 wires the real bet-slip submission here. Until then a real
+    // (non-dry-run) placement fails closed instead of silently no-op'ing.
+    async placeBet() {
+      throw upstreamError(
+        CODES.BROWSER_UNAVAILABLE,
+        'Bet placement is not wired to the browser yet',
+      );
+    },
     close() {
       if (!closePromise) {
         closePromise = (async () => {

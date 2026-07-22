@@ -7,10 +7,11 @@ function createFakeUpstream({
   sportsBoosts = {},
   balance = {},
   bets = [],
+  placeBet = async (draft) => ({ bet_id: 'fake-bet-1', draft_id: draft?.draft_id }),
 } = {}) {
   const calls = {
     sports: [], sportsAccount: [], sportsCatalog: [], sportsBoosts: [],
-    balance: [], bets: [],
+    balance: [], bets: [], placeBet: [],
   };
   return {
     calls,
@@ -37,6 +38,10 @@ function createFakeUpstream({
     async getBets(options = {}) {
       calls.bets.push(options);
       return bets;
+    },
+    async placeBet(draft) {
+      calls.placeBet.push(draft);
+      return placeBet(draft);
     },
   };
 }

@@ -102,6 +102,34 @@ test('CDP browser transport creates exact-origin gateways that share one queue',
   assert.deepEqual(queues[0].options, { timeoutMs: 1234 });
 });
 
+test('imsb_api mode builds one sports-origin gateway sharing a single queue', () => {
+  const gateways = [];
+  const queues = [];
+  const upstream = createConfiguredUpstream(
+    { ...browserConfig, upstreamMode: 'imsb_api' },
+    {
+      cdpGatewayFactory(options) {
+        gateways.push(options);
+        return { async evaluate() { return {}; }, async close() {} };
+      },
+      queueFactory(options) {
+        const queue = { options, run: (operation) => operation({ signal: new AbortController().signal }) };
+        queues.push(queue);
+        return queue;
+      },
+    },
+  );
+
+  assert.equal(typeof upstream.getSports, 'function');
+  assert.equal(typeof upstream.placeBet, 'function');
+  // Only the signed-in sports page is needed; no account/bets gateways.
+  assert.deepEqual(gateways, [
+    { cdpUrl: 'http://127.0.0.1:9223', pageOrigin: 'https://sports.example.test:2053', pagePathname: '/' },
+  ]);
+  assert.equal(queues.length, 1);
+  assert.deepEqual(queues[0].options, { timeoutMs: 1234 });
+});
+
 test('Apple Events browser transport creates exact-purpose gateways with no CDP URL', () => {
   const appleGateways = [];
   const cdpGateways = [];
@@ -222,6 +250,33 @@ test('CDP server composes and starts one realtime monitor without delaying liste
   )));
   await server.waitForShutdown();
   assert.deepEqual(calls.slice(-3), ['monitor.stop', 'ws.close', 'upstream.close']);
+});
+
+test('imsb_api mode reads live directly (no monitor) and rejects WS upgrades', async () => {
+  let monitorCreated = 0;
+  let wsCreated = 0;
+  const server = createHttpServer(
+    { ...browserConfig, upstreamMode: 'imsb_api' },
+    injectedBrowserUpstream(),
+    {
+      monitorFactory() { monitorCreated += 1; return { async start() {}, async stop() {} }; },
+      wsFeedFactory() { wsCreated += 1; return { async close() {} }; },
+    },
+  );
+
+  const port = await listen(server);
+  // imsb_api reads live via GetSEDelta itself — no CDP monitor, no WS feed.
+  assert.equal(monitorCreated, 0);
+  assert.equal(wsCreated, 0);
+  assert.equal(
+    await rejectedUpgrade(`ws://127.0.0.1:${port}/ws/sports?token=anything`),
+    503,
+  );
+
+  await new Promise((resolve, reject) => server.close((error) => (
+    error ? reject(error) : resolve()
+  )));
+  await server.waitForShutdown();
 });
 
 test('Apple Events rollback mode never starts realtime and returns 503 on upgrade', async () => {
