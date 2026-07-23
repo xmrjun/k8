@@ -19,8 +19,6 @@
 const {
   buildGetSeExpression,
   parseSeEvents,
-  buildGetSeDeltaExpression,
-  parseSeDelta,
   buildPlaceExpression,
   interpretPlaceResult,
   ImsbPlacementError,
@@ -37,7 +35,8 @@ const SPORTS = new Map([
   ['basketball', { sportId: 2, betTypeIds: [1, 2, 4] }],
 ]);
 
-const PRE_MATCH_MARKET = 1;
+const PRE_MATCH_MARKET = 1; // 早盘/今日
+const LIVE_MARKET = 3; // 滚球
 const GAME_PERIODS = [1, 2]; // full_time + first_half
 
 function trustedError(error) {
@@ -92,27 +91,24 @@ function createImsbUpstream({ gateway, queue, now = () => new Date() }) {
     // as `a:0` add-events. Pre-match (today/early) uses GetSE with a date window.
     // Both are token-authenticated page-context fetches parsed into the same
     // draft shape.
+    // Both live and pre-match use GetSE with a `sel` snapshot — only the market
+    // group differs (3 = 滚球, 1 = 早盘/今日). Live needs no date window.
+    const live = scope === 'live';
     let value;
     try {
-      const expression = scope === 'live'
-        ? buildGetSeDeltaExpression({
-          sportId: config.sportId,
-          betTypeIds: config.betTypeIds,
-          gamePeriods: GAME_PERIODS,
-        })
-        : buildGetSeExpression({
-          sportId: config.sportId,
-          market: PRE_MATCH_MARKET,
-          betTypeIds: config.betTypeIds,
-          gamePeriods: GAME_PERIODS,
-          ...dateWindow(scope, now),
-        });
+      const expression = buildGetSeExpression({
+        sportId: config.sportId,
+        market: live ? LIVE_MARKET : PRE_MATCH_MARKET,
+        betTypeIds: config.betTypeIds,
+        gamePeriods: GAME_PERIODS,
+        ...(live ? { dateFrom: '', dateTo: '' } : dateWindow(scope, now)),
+      });
       value = await queue.run(({ signal }) => gateway.evaluate(expression, { signal }));
     } catch (error) {
       throw trustedError(error);
     }
-    // parse*/normalizeEvents throw typed UpstreamError on a bad shape.
-    const parsed = scope === 'live' ? parseSeDelta(value) : parseSeEvents(value);
+    // parseSeEvents / normalizeEvents throw typed UpstreamError on a bad shape.
+    const parsed = parseSeEvents(value);
     return normalizeEvents(parsed, { scope, sport });
   }
 

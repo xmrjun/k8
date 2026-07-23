@@ -25,6 +25,14 @@ const { CODES, upstreamError } = require('./errors');
 // plus the venue's constant headers. No x-sc (server does not enforce it).
 const FETCH_HEADERS = "(()=>{let t='';try{t=new URLSearchParams(location.search).get('token')||'';}catch(e){}if(!t){try{const p=JSON.parse(localStorage.getItem('siteProfile'));if(p&&p.t)t=p.t;}catch(e){}}return{'Accept':'application/json','Content-Type':'application/json;charset=UTF-8','x-token':t,'x-v':'90594','x-platform':'3','x-lang':'hans','x-oddsTemp':'3','x-oddsTempBetType':'1'};})()";
 
+// In-page projection. The raw GetSE/GetSEDelta payload is several MB (1600+
+// events with every market), which blows the CDP evaluate message limit. Strip
+// each event to the fields the server parser needs — mapped bet types (1-4) on
+// the main line (ml 1) only — and cap the event count, so the response stays
+// small. parseSeEvents/parseSeDelta read this reduced shape unchanged.
+const REDUCE_EVENT = "(ev)=>({eid:ev.eid,htn:ev.htn,atn:ev.atn,cn:ev.cn,iop:ev.iop,edt:ev.edt,hs:ev.hs,as:ev.as,mls:(ev.mls||[]).filter(m=>m&&m.ml===1&&[1,2,3,4].indexOf(m.bti)>=0).map(m=>({mi:m.mi,bti:m.bti,btn:m.btn,gp:m.gp,ml:m.ml,ws:(m.ws||[]).map(w=>({wsi:w.wsi,si:w.si,hdp:w.hdp,dih:w.dih,s:w.s,o:w.o,ot:w.ot}))}))})";
+const MAX_SNAPSHOT_EVENTS = 500;
+
 // ---- Reading odds --------------------------------------------------------
 
 function buildGetEventsExpression({ sportId = 1, oddsType = 2 } = {}) {
@@ -70,6 +78,7 @@ function buildGetSeExpression({
       const res = await fetch('/api/EventV6/GetSE', { method:'POST', headers:${FETCH_HEADERS}, body: ${JSON.stringify(body)} });
       const text = await res.text();
       let data = null; try { data = JSON.parse(text); } catch (e) {}
+      if (data && Array.isArray(data.sel)) data = { StatusCode: data.StatusCode, sel: data.sel.slice(0, ${MAX_SNAPSHOT_EVENTS}).map(${REDUCE_EVENT}) };
       return { ok: res.status === 200 && !!data, status: res.status, data };
     } catch (e) { return { ok: false, status: 0, error: String(e && e.message) }; }
   })();`;
@@ -119,55 +128,6 @@ function parseSeEvents(result) {
     }
   }
   return { count: selections.length, selections };
-}
-
-// Live (滚球) snapshot: GetSEDelta with an empty Delta returns the FULL current
-// state as a `dc` array of add-event (`a:0`) entries — there is no `sel`
-// snapshot for live. `Market:3` = live. See docs/plans/2026-07-22-imsb-live-protocol.md.
-function buildGetSeDeltaExpression({
-  sportId = 1,
-  betTypeIds = [1, 2, 3, 4],
-  gamePeriods = [1, 2],
-} = {}) {
-  const body = JSON.stringify({
-    SportId: sportId,
-    Market: 3,
-    BetTypeIds: betTypeIds,
-    GamePeriods: gamePeriods,
-    IsCombo: false,
-    OddsType: 2,
-    DateFrom: '',
-    DateTo: '',
-    CompetitionIds: [],
-    Delta: '',
-    ProgrammeIds: [],
-  });
-  return `(async () => {
-    try {
-      const res = await fetch('/api/EventV6/GetSEDelta', { method:'POST', headers:${FETCH_HEADERS}, body: ${JSON.stringify(body)} });
-      const text = await res.text();
-      let data = null; try { data = JSON.parse(text); } catch (e) {}
-      return { ok: res.status === 200 && !!data, status: res.status, data };
-    } catch (e) { return { ok: false, status: 0, error: String(e && e.message) }; }
-  })();`;
-}
-
-// Parse an empty-Delta GetSEDelta result into the same flat selection shape as
-// parseSeEvents. Each `a:0` entry's `v[0]` is a full event; project them to the
-// `sel` shape and reuse parseSeEvents so read paths stay identical.
-function parseSeDelta(result) {
-  if (!result || result.ok === false) {
-    throw upstreamError(CODES.BROWSER_UNAVAILABLE, 'GetSEDelta call failed');
-  }
-  const data = result.data;
-  if (!data || data.StatusCode !== 100 || !Array.isArray(data.dc)) {
-    throw upstreamError(CODES.BAD_RESPONSE, 'GetSEDelta returned an unexpected shape');
-  }
-  const sel = [];
-  for (const entry of data.dc) {
-    if (entry && entry.a === 0 && Array.isArray(entry.v) && entry.v[0]) sel.push(entry.v[0]);
-  }
-  return parseSeEvents({ ok: true, data: { StatusCode: 100, sel } });
 }
 
 // Parse a GetESI result into a flat list of selections carrying the identifiers
@@ -329,8 +289,6 @@ module.exports = {
   parseEvents,
   buildGetSeExpression,
   parseSeEvents,
-  buildGetSeDeltaExpression,
-  parseSeDelta,
   buildPlaceExpression,
   interpretPlaceResult,
   ImsbPlacementError,

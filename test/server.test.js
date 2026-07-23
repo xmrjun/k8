@@ -124,7 +124,12 @@ test('imsb_api mode builds one sports-origin gateway sharing a single queue', ()
   assert.equal(typeof upstream.placeBet, 'function');
   // Only the signed-in sports page is needed; no account/bets gateways.
   assert.deepEqual(gateways, [
-    { cdpUrl: 'http://127.0.0.1:9223', pageOrigin: 'https://sports.example.test:2053', pagePathname: '/' },
+    {
+      cdpUrl: 'http://127.0.0.1:9223',
+      pageOrigin: 'https://sports.example.test:2053',
+      pagePathname: '/',
+      maxResponseBytes: 8_000_000,
+    },
   ]);
   assert.equal(queues.length, 1);
   assert.deepEqual(queues[0].options, { timeoutMs: 1234 });

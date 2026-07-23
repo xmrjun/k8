@@ -41,17 +41,9 @@ function toGetSeResult(events) {
   return { ok: true, status: 200, data: { StatusCode: 100, sel } };
 }
 
-// A live GetSEDelta result: the full snapshot arrives as a:0 add-events whose
-// v[0] is a full (m:3) event.
-function toGetSeDeltaResult(fixture) {
-  const [event] = toGetSeResult([fixture.event]).data.sel;
-  event.m = 3;
-  return { ok: true, status: 200, data: { StatusCode: 100, dc: [{ eid: event.eid, a: 0, sid: 1, v: [event] }] } };
-}
-
-// Gateway stub routing by the API path in the expression. Pre-match GetSE and
-// live GetSEDelta return the fixture for the requested SportId; the SPB
-// placement expression returns the programmed result.
+// Gateway stub routing by the API path in the expression. GetSE (pre-match with
+// Market 1, live with Market 3) returns the fixture for the requested SportId;
+// the SPB placement expression returns the programmed result.
 function stubGateway({ place, onEvaluate } = {}) {
   const calls = [];
   let closed = 0;
@@ -64,7 +56,6 @@ function stubGateway({ place, onEvaluate } = {}) {
       // The body is embedded as a JS string literal, so quotes are
       // backslash-escaped (\"SportId\":2). Tolerate escaped or raw form.
       const fixture = /SportId\\?":2/.test(expression) ? basketballFixture : footballFixture;
-      if (expression.includes('/api/EventV6/GetSEDelta')) return toGetSeDeltaResult(fixture);
       if (expression.includes('/api/EventV6/GetSE')) return toGetSeResult([fixture.event]);
       if (expression.includes('/api/PlaceBetV6/SPB')) return place;
       throw new Error(`unexpected expression: ${expression.slice(0, 40)}`);
@@ -114,7 +105,7 @@ test('getSports returns a basketball snapshot with a moneyline market', async ()
   assert.match(gateway.calls[0], /SportId\\?":2/);
 });
 
-test('getSports (live) evaluates GetSEDelta and projects the a:0 snapshot', async () => {
+test('getSports (live) evaluates GetSE with Market 3 and projects the snapshot', async () => {
   const gateway = stubGateway();
   const upstream = createImsbUpstream({ gateway, queue: passthroughQueue });
   const snapshot = await upstream.getSports({ scope: 'live', sport: 'football' });
@@ -123,7 +114,8 @@ test('getSports (live) evaluates GetSEDelta and projects the a:0 snapshot', asyn
   assert.equal(snapshot.events[0].event_id, '111756567');
   const types = snapshot.events[0].markets.map((m) => m.type);
   assert.ok(types.includes('handicap') && types.includes('1x2'));
-  assert.match(gateway.calls[0], /\/api\/EventV6\/GetSEDelta/);
+  assert.match(gateway.calls[0], /\/api\/EventV6\/GetSE/);
+  assert.match(gateway.calls[0], /\\?"Market\\?":3/); // live market group
 });
 
 test('getSports returns empty for an unsupported sport with no API call', async () => {

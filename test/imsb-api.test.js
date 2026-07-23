@@ -6,49 +6,11 @@ const assert = require('node:assert/strict');
 const {
   buildGetEventsExpression,
   parseEvents,
-  buildGetSeDeltaExpression,
-  parseSeDelta,
   buildPlaceExpression,
   interpretPlaceResult,
   ImsbPlacementError,
 } = require('../src/upstream/imsb-api');
 const { UpstreamError, CODES } = require('../src/upstream/errors');
-
-test('buildGetSeDeltaExpression requests live (Market 3) with an empty Delta', () => {
-  const expr = buildGetSeDeltaExpression({ sportId: 2 });
-  assert.match(expr, /\/api\/EventV6\/GetSEDelta/);
-  assert.match(expr, /\\?"Market\\?":3/);
-  assert.match(expr, /Delta\\?":\\?"\\?"/); // empty Delta = full snapshot
-});
-
-test('parseSeDelta extracts a:0 add-events and ignores other actions', () => {
-  const event = {
-    eid: 5001, htn: 'H', atn: 'A', cn: 'L', iop: true, edt: 't',
-    mls: [{ mi: 1, bti: 3, btn: '1X2', gp: 1, ml: 1, ws: [{ wsi: 9, si: 5, o: 2.1, ot: 3 }] }],
-  };
-  const result = {
-    ok: true,
-    data: {
-      StatusCode: 100,
-      dc: [
-        { eid: 5001, a: 0, sid: 1, v: [event] },
-        { eid: 5001, a: 5, sid: 1, v: { hs: 1, as: 0 } }, // score update — not an add
-        { eid: 7, a: 3, sid: 1, v: [] }, // market update for an event we do not add
-      ],
-    },
-  };
-  const parsed = parseSeDelta(result);
-  assert.equal(parsed.count, 1);
-  assert.equal(parsed.selections[0].eid, 5001);
-  assert.equal(parsed.selections[0].wager_selection_id, 9);
-});
-
-test('parseSeDelta throws a typed error on a non-delta shape', () => {
-  assert.throws(() => parseSeDelta({ ok: true, data: { StatusCode: 100, sel: [] } }),
-    (error) => error instanceof UpstreamError && error.code === CODES.BAD_RESPONSE);
-  assert.throws(() => parseSeDelta({ ok: false }),
-    (error) => error instanceof UpstreamError && error.code === CODES.BROWSER_UNAVAILABLE);
-});
 
 // A GetESI result shaped like the live capture (2026-07-21).
 function getEsiResult() {

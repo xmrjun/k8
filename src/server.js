@@ -61,6 +61,9 @@ function createConfiguredUpstream(config, {
       ...sharedOptions,
       pageOrigin: config.browserSportsOrigin,
       pagePathname: '/',
+      // The reduced snapshot is far smaller than the raw multi-MB GetSE, but
+      // keep a generous CDP message ceiling for large boards.
+      maxResponseBytes: 8_000_000,
     });
     return createImsbUpstream({ gateway, queue });
   }
